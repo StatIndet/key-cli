@@ -1,0 +1,15 @@
+.build/
+build/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+*.o
+*.a
+*.so
+*.so.*
+*.log
+__pycache__/
+
