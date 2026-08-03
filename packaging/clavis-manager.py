@@ -2260,10 +2260,11 @@ def parser_for(command: str) -> argparse.ArgumentParser:
         parser.add_argument("release", nargs="?")
         parser.add_argument("--dry-run", action="store_true")
     elif command == "release":
-        parser.add_argument("action", choices=["list", "remove"])
+        parser.add_argument("action", choices=["list", "remove", "install-finalize"])
         parser.add_argument("release", nargs="?")
         parser.add_argument("--dry-run", action="store_true")
         parser.add_argument("--json", action="store_true")
+        parser.add_argument("--partial", type=Path)
     elif command == "uninstall":
         parser.add_argument("component", nargs="?")
         parser.add_argument("--dry-run", action="store_true")
@@ -2347,6 +2348,12 @@ def main(argv: list[str]) -> int:
         if command == "rollback":
             return rollback(paths, parsed.release, parsed.dry_run)
         if command == "release":
+            if parsed.action == "install-finalize":
+                if parsed.release is None or parsed.partial is None:
+                    raise ClavisError(
+                        "release install-finalize requires RELEASE and --partial PATH"
+                    )
+                return finalize_install(paths, parsed.partial, parsed.release)
             return release_command(
                 paths,
                 parsed.action,

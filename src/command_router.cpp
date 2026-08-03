@@ -104,6 +104,7 @@ QString CommandRouter::helpText()
         "  key rollback [RELEASE] [--dry-run]\n"
         "  key release list [--json]\n"
         "  key release remove RELEASE [--dry-run]\n"
+        "  key release install-finalize RELEASE --partial PATH\n"
         "  key update [--artifact PATH]\n"
         "  key uninstall [--dry-run] [--purge-cache] [--purge-config] [--purge-data]\n"
         "  key setup cpu-power [--disable] [--dry-run]\n"
