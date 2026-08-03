@@ -103,9 +103,15 @@ install_cmd() { build; cmake --install "$build_dir"; }
 uninstall_cmd() {
     local manifest="$build_dir/install_manifest.txt"
     [[ -f "$manifest" ]] || { printf 'no install manifest: %s\n' "$manifest" >&2; exit 1; }
+    local destdir=${DESTDIR:-}
     while IFS= read -r path; do
-        [[ -n "$path" && -e "$path" ]] || continue
-        rm -f -- "$path"
+        [[ -n "$path" ]] || continue
+        local target="$path"
+        if [[ -n "$destdir" ]]; then
+            target="$destdir$path"
+        fi
+        [[ -e "$target" || -L "$target" ]] || continue
+        rm -f -- "$target"
     done < "$manifest"
 }
 
@@ -120,4 +126,3 @@ case "$command_name" in
     uninstall) uninstall_cmd ;;
     *) printf 'unknown command: %s\n' "$command_name" >&2; usage >&2; exit 2 ;;
 esac
-
