@@ -29,3 +29,10 @@ add_test(
             "${CMAKE_CURRENT_SOURCE_DIR}/test_theme_command.sh"
             "$<TARGET_FILE:key>"
 )
+add_test(
+    NAME key_cli_weather_command_tests
+    COMMAND "${BASH_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_weather_command.sh"
+            "$<TARGET_FILE:key>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/weather.json"
+)

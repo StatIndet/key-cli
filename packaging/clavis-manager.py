@@ -1965,11 +1965,6 @@ def uninstall(
     ):
         if enabled:
             _validate_purge_root(paths, target, label)
-    if "cpuPower" in manifest.get("systemIntegrations", {}):
-        raise ClavisError(
-            "CPU power integration is still installed; run `key setup cpu-power "
-            "--disable` first so its separate authorization is explicit"
-        )
     preserved: list[dict[str, Any]] = []
 
     def preserve_file(
@@ -2247,13 +2242,6 @@ def uninstall_component_command(paths: ClavisPaths, name: str) -> int:
     return 0
 
 
-def setup_cpu_power(paths: ClavisPaths, disable: bool, dry_run: bool) -> int:
-    del paths, disable, dry_run
-    raise ClavisError(
-        "CPU power integration moved to keytop; key-cli does not install a daemon, socket, or privileged helper"
-    )
-
-
 def parser_for(command: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=f"key {command}")
     if command == "rollback":
@@ -2286,10 +2274,6 @@ def parser_for(command: str) -> argparse.ArgumentParser:
     elif command == "component":
         parser.add_argument("action", choices=["status"])
         parser.add_argument("--json", action="store_true")
-    elif command == "setup":
-        parser.add_argument("topic", choices=["cpu-power"])
-        parser.add_argument("--disable", action="store_true")
-        parser.add_argument("--dry-run", action="store_true")
     elif command in {"shell", "ipc"}:
         parser.add_argument("arguments", nargs=argparse.REMAINDER)
     elif command == "shell-log-monitor":
@@ -2392,8 +2376,6 @@ def main(argv: list[str]) -> int:
                     raise ClavisError("component update cannot be combined with --artifact")
                 return update_component_command(paths, parsed.component)
             return update_command(paths, parsed.artifact)
-        if command == "setup":
-            return setup_cpu_power(paths, parsed.disable, parsed.dry_run)
         if command == "install-finalize":
             return finalize_install(paths, parsed.partial, parsed.release)
         if command == "install":

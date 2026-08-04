@@ -8,6 +8,18 @@
 
 namespace {
 
+QString sourceProviderFrom(QDir directory)
+{
+    while (true) {
+        const QString candidate = directory.filePath(
+            QStringLiteral("packaging/weather.py"));
+        if (QFileInfo(candidate).isFile())
+            return candidate;
+        if (!directory.cdUp())
+            return {};
+    }
+}
+
 QString providerPath()
 {
     const QString overridePath = QString::fromLocal8Bit(
@@ -17,22 +29,18 @@ QString providerPath()
 
     QDir executableDir(QCoreApplication::applicationDirPath());
     if (executableDir.dirName() == QStringLiteral("bin")) {
-        executableDir.cdUp();
-        const QString installed = executableDir.filePath(
+        QDir prefixDir(executableDir);
+        prefixDir.cdUp();
+        const QString installed = prefixDir.filePath(
             QStringLiteral("share/key-cli/weather.py"));
         if (QFileInfo(installed).isFile())
             return installed;
     }
 
-    QDir source(QDir::currentPath());
-    while (!source.isRoot()) {
-        const QString candidate = source.filePath(
-            QStringLiteral("packaging/weather.py"));
-        if (QFileInfo(candidate).isFile())
-            return candidate;
-        source.cdUp();
-    }
-    return {};
+    const QString executableSource = sourceProviderFrom(executableDir);
+    return executableSource.isEmpty()
+        ? sourceProviderFrom(QDir(QDir::currentPath()))
+        : executableSource;
 }
 
 } // namespace

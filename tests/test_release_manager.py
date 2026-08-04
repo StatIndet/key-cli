@@ -62,6 +62,7 @@ def main() -> int:
                 "HOME": str(root / "home"),
                 "CLAVIS_INSTALL_PREFIX": str(root / "clavis"),
                 "CLAVIS_BIN_HOME": str(root / "bin"),
+                "CLAVIS_KEY": str(root / "system-bin/key"),
                 "XDG_CONFIG_HOME": str(root / "config"),
                 "XDG_DATA_HOME": str(root / "data"),
                 "XDG_STATE_HOME": str(root / "state"),
@@ -71,10 +72,13 @@ def main() -> int:
         )
         try:
             paths = ClavisPaths.from_environment()
+            assert paths.stable_key == root / "system-bin/key"
             first = create_partial(paths, "2026.08.03", "first")
             finalize_install(paths, first, "2026.08.03")
             assert resolve_active_release(paths).name == "2026.08.03"
             assert not (paths.current_release / "bin/key").exists()
+            assert paths.as_environment(resolve_active_release(paths))["CLAVIS_KEY"] \
+                == str(root / "system-bin/key")
 
             second = create_partial(paths, "2026.08.03.1", "second")
             finalize_install(paths, second, "2026.08.03.1")

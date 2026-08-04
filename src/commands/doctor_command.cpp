@@ -47,19 +47,20 @@ CommandResult cpuPowerDoctor(const QStringList &arguments)
     }
     const bool keytopPowerReadable = keytopCpu.value(
         QStringLiteral("powerWatts")).isDouble();
-    const bool available = keytopStarted && !keytopCpu.isEmpty();
     const QString status = !keytopStarted
         ? QStringLiteral("keytop_not_installed")
         : keytopPowerReadable ? QStringLiteral("keytop_readable")
                               : QStringLiteral("keytop_available")
         ;
-    const QString message = available
-        ? QStringLiteral("CPU diagnostics are provided by the independent keytop process.")
-        : QStringLiteral("Install keytop to inspect CPU power without duplicating its sampler.");
+    const QString message = keytopPowerReadable
+        ? QStringLiteral("CPU power is readable through the independent keytop process.")
+        : keytopStarted
+            ? QStringLiteral("Reinstall keytop with sudo to enable its socket-activated RAPL helper.")
+            : QStringLiteral("Install keytop to inspect CPU power without duplicating its sampler.");
     const QJsonObject object{
         {QStringLiteral("schemaVersion"), 1},
         {QStringLiteral("command"), QStringLiteral("doctor.cpu-power")},
-        {QStringLiteral("ok"), available},
+        {QStringLiteral("ok"), keytopPowerReadable},
         {QStringLiteral("status"), status},
         {QStringLiteral("keytopAvailable"), keytopStarted},
         {QStringLiteral("keytopPowerReadable"), keytopPowerReadable},
@@ -71,7 +72,8 @@ CommandResult cpuPowerDoctor(const QStringList &arguments)
         "  keytop: %2\n"
         "  %3")
         .arg(status, keytopStarted ? QStringLiteral("available") : QStringLiteral("not installed"), message);
-    return {available ? 0 : 1, jsonRequested, object, text, !available};
+    return {keytopPowerReadable ? 0 : 1, jsonRequested, object, text,
+            !keytopPowerReadable};
 }
 
 } // namespace

@@ -5,7 +5,7 @@ _key_completion() {
     local words
 
     if (( COMP_CWORD == 1 )); then
-        words="version shell ipc doctor audio record cast clipboard top weather theme install update uninstall component rollback release setup migrate"
+        words="version shell ipc doctor audio record cast clipboard top weather theme install update uninstall component rollback release migrate"
     elif [[ "$command" == theme && "$subcommand" == zsh ]]; then
         words="list status show hide toggle reset"
     elif [[ "$command" == theme ]]; then

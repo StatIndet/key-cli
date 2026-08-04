@@ -57,7 +57,6 @@ CommandResult CommandRouter::route(const QStringList &arguments) const
         || command == QStringLiteral("rollback")
         || command == QStringLiteral("uninstall")
         || command == QStringLiteral("migrate")
-        || command == QStringLiteral("setup")
         || command == QStringLiteral("release")
         || command == QStringLiteral("update")
         || command == QStringLiteral("install")
@@ -113,7 +112,6 @@ QString CommandRouter::helpText()
         "  key release install-finalize RELEASE --partial PATH\n"
         "  key update [--artifact PATH]\n"
         "  key uninstall [--dry-run] [--purge-cache] [--purge-config] [--purge-data]\n"
-        "  key setup cpu-power [--disable] [--dry-run]\n"
         "  key doctor legacy [--json]\n"
         "  key migrate legacy [--dry-run]\n"
         "\n"

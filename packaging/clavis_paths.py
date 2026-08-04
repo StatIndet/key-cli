@@ -33,6 +33,7 @@ def _xdg_path(override: str, variable: str, fallback: Path) -> Path:
 class ClavisPaths:
     home: Path
     bin_home: Path
+    key_path: Path
     install_prefix: Path
     config_home: Path
     data_home: Path
@@ -51,6 +52,7 @@ class ClavisPaths:
         if home is None:
             raise PathConfigurationError("HOME must be set to an absolute path")
         bin_home = _absolute_env("CLAVIS_BIN_HOME") or home / ".local/bin"
+        key_path = _absolute_env("CLAVIS_KEY") or bin_home / "key"
         install_prefix = (
             _absolute_env("CLAVIS_INSTALL_PREFIX")
             or home / ".local/lib/clavis"
@@ -102,6 +104,7 @@ class ClavisPaths:
         return cls(
             home=home,
             bin_home=bin_home,
+            key_path=key_path,
             install_prefix=install_prefix,
             config_home=config_home,
             data_home=data_home,
@@ -125,7 +128,7 @@ class ClavisPaths:
 
     @property
     def stable_key(self) -> Path:
-        return self.bin_home / "key"
+        return self.key_path
 
     @property
     def manifest(self) -> Path:

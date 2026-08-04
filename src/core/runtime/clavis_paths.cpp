@@ -34,6 +34,12 @@ ClavisPaths ClavisPaths::fromEnvironment()
     if (paths.m_binHome.isEmpty())
         paths.m_binHome = paths.m_home + QStringLiteral("/.local/bin");
 
+    paths.m_stableKey = cleanAbsolute(env("CLAVIS_KEY"));
+    if (paths.m_stableKey.isEmpty()) {
+        paths.m_stableKey = QDir(paths.m_binHome).filePath(
+            QStringLiteral("key"));
+    }
+
     paths.m_installPrefix = cleanAbsolute(env("CLAVIS_INSTALL_PREFIX"));
     if (paths.m_installPrefix.isEmpty())
         paths.m_installPrefix = paths.m_home + QStringLiteral("/.local/lib/clavis");
@@ -122,7 +128,7 @@ QString ClavisPaths::qmlImportHome() const
 }
 QString ClavisPaths::stableKey() const
 {
-    return QDir(m_binHome).filePath(QStringLiteral("key"));
+    return m_stableKey;
 }
 
 QProcessEnvironment ClavisPaths::processEnvironment(const QString &releaseRoot) const
@@ -146,7 +152,8 @@ QProcessEnvironment ClavisPaths::processEnvironment(const QString &releaseRoot) 
     result.insert(QStringLiteral("CLAVIS_KEY"), stableKey());
     result.insert(
         QStringLiteral("PATH"),
-        prependPath(m_binHome, result.value(QStringLiteral("PATH"))));
+        prependPath(QFileInfo(stableKey()).absolutePath(),
+                    prependPath(m_binHome, result.value(QStringLiteral("PATH")))));
     result.insert(
         QStringLiteral("QML_IMPORT_PATH"),
         prependPath(qmlImport, result.value(QStringLiteral("QML_IMPORT_PATH"))));

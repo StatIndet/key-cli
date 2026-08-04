@@ -40,6 +40,9 @@ Niri、Zsh、Fcitx5 或当前 Clavis release。
 Shell release 只包含 QML、assets、保留的 native QML plugins 和 runtime metadata。
 `key-cli` 注册/验证 `.partial` runtime，再原子切换 `current`；release 内没有第二份
 `bin/key`。Shell 可通过 `$CLAVIS_KEY ipc call ...` 调用稳定 CLI。
+`key shell` 会把当前实际执行的 `key` 绝对路径传入 Shell；这避免系统安装、源码开发
+构建和旧用户级 launcher 并存时误选已经失效的 release 内 `bin/key`。开发构建的天气
+provider 也从 `key` 自身位置发现，不依赖 Shell 的当前工作目录。
 
 ## Zsh 主题委托
 

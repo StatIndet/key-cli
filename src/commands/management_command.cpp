@@ -98,6 +98,11 @@ CommandResult ManagementCommand::run(const QString &command,
     QProcessEnvironment environment = releaseRoot.isEmpty()
         ? QProcessEnvironment::systemEnvironment()
         : paths.processEnvironment(releaseRoot);
+    const QFileInfo currentExecutable(QCoreApplication::applicationFilePath());
+    const QString currentKey = currentExecutable.canonicalFilePath().isEmpty()
+        ? currentExecutable.absoluteFilePath()
+        : currentExecutable.canonicalFilePath();
+    environment.insert(QStringLiteral("CLAVIS_KEY"), currentKey);
     environment.insert(QStringLiteral("CLAVIS_KEY_CLI_LIBEXEC"),
                        QFileInfo(manager).absolutePath());
     process.setProcessEnvironment(environment);

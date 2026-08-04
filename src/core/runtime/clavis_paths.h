@@ -37,6 +37,7 @@ private:
 
     QString m_home;
     QString m_binHome;
+    QString m_stableKey;
     QString m_installPrefix;
     QString m_configHome;
     QString m_dataHome;

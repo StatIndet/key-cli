@@ -20,7 +20,6 @@ _key() {
         'component:show component status'
         'rollback:rollback the active Shell release'
         'release:manage Shell releases'
-        'setup:manage optional system setup'
         'migrate:inspect legacy state'
     )
 
