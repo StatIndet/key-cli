@@ -7,6 +7,7 @@
 #include "commands/management_command.h"
 #include "commands/record_command.h"
 #include "commands/top_command.h"
+#include "commands/theme_command.h"
 #include "commands/version_command.h"
 #include "commands/weather_command.h"
 #include "recording/recording_types.h"
@@ -49,6 +50,8 @@ CommandResult CommandRouter::route(const QStringList &arguments) const
         return TopCommand().run(rest);
     if (command == QStringLiteral("weather"))
         return WeatherCommand().run(rest);
+    if (command == QStringLiteral("theme"))
+        return ThemeCommand().run(rest);
     if (command == QStringLiteral("shell")
         || command == QStringLiteral("ipc")
         || command == QStringLiteral("rollback")
@@ -97,6 +100,9 @@ QString CommandRouter::helpText()
         "  key clipboard watch\n"
         "  key top [--interval MILLISECONDS]\n"
         "  key weather [--json] [--refresh] [--ttl SECONDS] [--latitude LAT --longitude LON]\n"
+        "  key theme zsh list|status [--json]\n"
+        "  key theme zsh show|hide|toggle <module...>\n"
+        "  key theme zsh reset\n"
         "  key install keytop|clavis-zsh-theme|clavis-fcitx5-theme [--source PATH]\n"
         "  key update COMPONENT\n"
         "  key component status [--json]\n"

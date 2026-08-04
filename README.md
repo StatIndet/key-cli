@@ -41,9 +41,29 @@ Shell release 只包含 QML、assets、保留的 native QML plugins 和 runtime 
 `key-cli` 注册/验证 `.partial` runtime，再原子切换 `current`；release 内没有第二份
 `bin/key`。Shell 可通过 `$CLAVIS_KEY ipc call ...` 调用稳定 CLI。
 
+## Zsh 主题委托
+
+`key-cli` 不读取或解析 Zsh 配置，也不保存主题状态；它只把参数安全地透传给已安装的
+`zsh-theme` 命令：
+
+```bash
+key theme zsh list
+key theme zsh status
+key theme zsh status --json
+key theme zsh show path
+key theme zsh hide git language
+key theme zsh toggle duration
+key theme zsh reset
+```
+
+未安装 `clavis-zsh-theme` 时会明确提示安装组件。Keytop 仍由 Quickshell 直接调用，
+不会通过 `key` 重新实现系统监测。
+
+Shell completion 位于安装后的 `share/key-cli/completions/`，包含 Bash 的
+`key.bash` 和 Zsh 的 `_key`；发行版可以将它们分别接入自己的 completion 目录。
+
 ## 未来 AUR
 
 AUR 包可将 `key-cli` 安装到 `/usr`，并把 `keytop`、Shell 和两个主题作为独立包依赖
 或可选组件。在线 update provider 在未有签名 artifact 实现前保持拒绝状态，不伪装
 成 pacman 或 AUR helper。
-

@@ -21,3 +21,11 @@ add_test(
     COMMAND Python3::Interpreter
             "${CMAKE_CURRENT_SOURCE_DIR}/test_release_manager.py"
 )
+
+find_program(BASH_EXECUTABLE bash REQUIRED)
+add_test(
+    NAME key_cli_theme_command_tests
+    COMMAND "${BASH_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_theme_command.sh"
+            "$<TARGET_FILE:key>"
+)

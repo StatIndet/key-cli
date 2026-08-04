@@ -68,6 +68,8 @@ add_executable(key
     commands/record_command.cpp
     commands/top_command.h
     commands/top_command.cpp
+    commands/theme_command.h
+    commands/theme_command.cpp
     commands/version_command.h
     commands/version_command.cpp
     commands/weather_command.h

@@ -24,6 +24,11 @@ install(DIRECTORY
     FILES_MATCHING PATTERN "*.py" PATTERN "*.json" PATTERN "*.in"
 )
 install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/completions/key.bash"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/completions/_key"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/key-cli/completions"
+)
+install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/key-cli"
 )

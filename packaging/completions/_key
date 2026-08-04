@@ -1,0 +1,52 @@
+#compdef key
+
+_key() {
+    local -a commands
+    commands=(
+        'version:show the CLI version'
+        'shell:start Clavis Shell'
+        'ipc:call Shell IPC'
+        'doctor:check dependencies'
+        'audio:control audio capture'
+        'record:control recording'
+        'cast:control casting'
+        'clipboard:manage clipboard history'
+        'top:compatibility system monitor entry point'
+        'weather:fetch weather data'
+        'theme:control installed themes'
+        'install:install an official component'
+        'update:update an official component'
+        'uninstall:uninstall an official component'
+        'component:show component status'
+        'rollback:rollback the active Shell release'
+        'release:manage Shell releases'
+        'setup:manage optional system setup'
+        'migrate:inspect legacy state'
+    )
+
+    if (( CURRENT == 1 )); then
+        _describe 'key command' commands
+        return
+    fi
+
+    case "$words[2]" in
+        theme)
+            if (( CURRENT == 2 )); then
+                _describe 'theme provider' '(zsh\:Zsh theme controls)'
+            elif [[ "$words[3]" == zsh ]]; then
+                _describe 'zsh theme command' \
+                    '(list\:list modules status\:show status show\:show modules hide\:hide modules toggle\:toggle modules reset\:reset modules)'
+            fi
+            ;;
+        install)
+            _describe 'component' \
+                '(keytop\:system monitor clavis-zsh-theme\:Zsh theme clavis-fcitx5-theme\:Fcitx5 theme)'
+            ;;
+        component)
+            _describe 'component command' '(status\:show installed components)'
+            ;;
+        release)
+            _describe 'release command' '(list\:list releases remove\:remove release install-finalize\:register partial release)'
+            ;;
+    esac
+}
