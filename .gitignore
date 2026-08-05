@@ -1,5 +1,7 @@
 .build/
 build/
+dist/
+*.egg-info/
 CMakeCache.txt
 CMakeFiles/
 Makefile
@@ -12,4 +14,3 @@ compile_commands.json
 *.so.*
 *.log
 __pycache__/
-

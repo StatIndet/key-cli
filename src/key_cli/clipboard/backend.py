@@ -1,0 +1,356 @@
+from __future__ import annotations
+
+import base64
+import binascii
+import fcntl
+import hashlib
+import html
+import json
+import mimetypes
+import os
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+from ..utils.output import DEPENDENCY_FAILURE, GENERAL_FAILURE, Result, error, fail, ok
+
+
+MAX_PAYLOAD = 64 * 1024 * 1024
+MAX_LIMIT = 500
+CAPABILITIES = {"inspect": True, "preview": True, "mimeRestore": True, "mimeAwareStore": True}
+
+
+def executable(name: str) -> str | None:
+    return shutil.which(name)
+
+
+def dependencies() -> dict[str, bool | None]:
+    return {"cliphist": executable("cliphist") is not None, "wlCopy": executable("wl-copy") is not None, "wlPaste": executable("wl-paste") is not None}
+
+
+def watcher_running() -> bool:
+    override = os.environ.get("CLAVIS_CLIPBOARD_WATCHER_RUNNING", "").lower()
+    if override in {"1", "true", "yes"}:
+        return True
+    if override in {"0", "false", "no"}:
+        return False
+    proc = Path("/proc")
+    try:
+        for directory in proc.iterdir():
+            if not directory.name.isdigit():
+                continue
+            try:
+                values = directory.joinpath("cmdline").read_bytes().decode(errors="replace").split("\0")
+            except OSError:
+                continue
+            joined = " ".join(values)
+            if ("cliphist" in joined and "store" in joined) or ("key" in joined and "clipboard" in joined and "store" in joined):
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def run(program: str, arguments: list[str], input_data: bytes | None = None, timeout: float = 10) -> subprocess.CompletedProcess[bytes] | None:
+    try:
+        return subprocess.run([program, *arguments], input=input_data, capture_output=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def base_entry(entry_id: str) -> dict:
+    return {"id": entry_id, "payloadKind": "binary", "textSubtype": None, "title": "二进制剪贴板", "subtitle": "未知二进制内容", "icon": "data_object", "preview": "", "previewUrl": "", "mimeType": "", "byteSize": 0, "width": 0, "height": 0, "fileCount": 0, "files": [], "fileOperation": None, "multiline": False, "lineCount": 0, "restorable": True}
+
+
+def text_display(value: str) -> tuple[str, str, int, bool]:
+    lines = [line.replace("\t", " ").strip() for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    lines = [line for line in lines if line]
+    if not lines:
+        return "空文本", "文本", 0, False
+    return lines[0][:240], (lines[1] + ("…" if len(lines) > 2 else ""))[:300] if len(lines) > 1 else "文本", len(lines), len(lines) > 1
+
+
+def image_info(data: bytes) -> tuple[str, int, int] | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+        return "image/png", int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        if len(data) >= 10:
+            return "image/gif", int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP" and len(data) >= 30:
+        if data[12:16] == b"VP8X":
+            return "image/webp", 1 + int.from_bytes(data[24:27], "little"), 1 + int.from_bytes(data[27:30], "little")
+        return "image/webp", 0, 0
+    if data.startswith(b"\xff\xd8"):
+        index = 2
+        while index + 9 < len(data):
+            if data[index] != 0xFF:
+                index += 1
+                continue
+            marker = data[index + 1]
+            index += 2
+            if marker in {0xD8, 0xD9}:
+                continue
+            if index + 2 > len(data):
+                break
+            size = int.from_bytes(data[index:index + 2], "big")
+            if marker in set(range(0xC0, 0xC4)) | set(range(0xC5, 0xC8)) | set(range(0xC9, 0xCC)) | set(range(0xCD, 0xD0)):
+                if index + 7 < len(data):
+                    return "image/jpeg", int.from_bytes(data[index + 5:index + 7], "big"), int.from_bytes(data[index + 3:index + 5], "big")
+                break
+            index += max(size, 2)
+    return None
+
+
+def preview_path(entry_id: str, data: bytes, mime: str) -> str:
+    root = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "clavis" / "clipboard"
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    suffix = "." + (mime.split("/", 1)[-1].replace("jpeg", "jpg") or "bin")
+    path = root / f"entry-{entry_id}-{hashlib.sha256(data).hexdigest()[:16]}{suffix}"
+    if not path.exists():
+        path.write_bytes(data)
+        os.chmod(path, 0o600)
+    return path.resolve().as_uri()
+
+
+def file_metadata(uri: str) -> dict:
+    parsed = urlparse(uri)
+    path = Path(unquote(parsed.path)) if parsed.scheme == "file" and parsed.netloc in {"", "localhost"} else None
+    name = path.name if path else Path(parsed.path).name
+    value = {"uri": uri, "local": path is not None, "exists": bool(path and path.exists()), "readable": bool(path and os.access(path, os.R_OK)), "directory": bool(path and path.is_dir()), "byteSize": path.stat().st_size if path and path.is_file() else 0, "mimeType": mimetypes.guess_type(name)[0] or "", "category": "file", "icon": "file_present", "previewUrl": "", "name": name, "parent": str(path.parent) if path else parsed.scheme + "://" + parsed.netloc}
+    if value["directory"]:
+        value.update({"category": "folder", "icon": "folder", "mimeType": "inode/directory"})
+    elif value["mimeType"].startswith("image/"):
+        value.update({"category": "image", "icon": "image", "previewUrl": uri})
+    elif value["mimeType"].startswith("video/"):
+        value.update({"category": "video", "icon": "video_file"})
+    elif value["mimeType"].startswith("audio/"):
+        value.update({"category": "audio", "icon": "audio_file"})
+    elif value["mimeType"] == "application/pdf":
+        value.update({"category": "pdf", "icon": "picture_as_pdf"})
+    elif value["mimeType"].startswith("text/"):
+        value.update({"category": "document", "icon": "description"})
+    return value
+
+
+HTML_IMAGE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*(['\"])(.*?)\1", re.I | re.S)
+DATA_IMAGE = re.compile(r"^data:(image/(?:png|jpeg|gif|webp));base64,(.+)$", re.I | re.S)
+
+
+def _html_image_payload(entry_id: str, text: str, create_preview: bool, depth: int) -> tuple[dict | None, dict | None, bytes | None]:
+    if depth >= 2:
+        return None, None, None
+    match = HTML_IMAGE.search(text)
+    if not match:
+        return None, None, None
+    source = html.unescape(match.group(2)).strip()
+    data_match = DATA_IMAGE.fullmatch(source)
+    image_data: bytes | None = None
+    if data_match:
+        try:
+            image_data = base64.b64decode(data_match.group(2), validate=True)
+        except (ValueError, binascii.Error):
+            image_data = None
+    elif source.lower().startswith("file://"):
+        parsed = urlparse(source)
+        if parsed.netloc in {"", "localhost"}:
+            path = Path(unquote(parsed.path))
+            try:
+                if path.is_file() and not path.is_symlink() and path.stat().st_size <= MAX_PAYLOAD:
+                    image_data = path.read_bytes()
+            except OSError:
+                image_data = None
+    if not image_data or len(image_data) > MAX_PAYLOAD:
+        return None, None, None
+    payload, payload_error, _ = _inspect_payload(entry_id, image_data, create_preview, depth + 1)
+    if payload_error or not payload or payload.get("payloadKind") != "image":
+        return None, None, None
+    payload["htmlImageFallback"] = True
+    return payload, None, image_data
+
+
+def _inspect_payload(entry_id: str, data: bytes, create_preview: bool = True, depth: int = 0) -> tuple[dict | None, dict | None, bytes | None]:
+    if len(data) > MAX_PAYLOAD:
+        return None, error("clipboard_payload_too_large", "clipboard payload exceeds the safe limit"), None
+    result = base_entry(entry_id)
+    result["byteSize"] = len(data)
+    image = image_info(data)
+    if image:
+        mime, width, height = image
+        if width > 16384 or height > 16384:
+            return None, error("clipboard_image_decode_failed", "image dimensions exceed the safe limit"), None
+        result.update({"payloadKind": "image", "title": "图片剪贴板", "subtitle": f"{mime.split('/')[-1].upper()} · {width}×{height} · {len(data)} B", "icon": "image", "mimeType": mime, "width": width, "height": height})
+        if create_preview:
+            result["previewUrl"] = preview_path(entry_id, data, mime)
+        return result, None, None
+    try:
+        text = data.decode("utf-8") if b"\0" not in data else ""
+    except UnicodeDecodeError:
+        text = ""
+    if text and any(ord(character) < 32 and character not in "\n\r\t" for character in text):
+        text = ""
+    if text:
+        if re.match(r"^\s*(?:<!doctype\b|<html\b|<meta\b|<img\b|<div\b|<span\b)", text, re.I):
+            embedded, embedded_error, restore_data = _html_image_payload(
+                entry_id, text, create_preview, depth)
+            if embedded_error or embedded:
+                return embedded, embedded_error, restore_data
+            plain = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", text, flags=re.I | re.S)
+            plain = re.sub(r"<[^>]+>", " ", plain)
+            plain = html.unescape(re.sub(r"\s+", " ", plain)).strip()
+            title, subtitle, lines, multiline = text_display(plain)
+            result.update({"payloadKind": "text", "textSubtype": "plain", "mimeType": "text/html", "title": title if plain else "HTML 内容", "subtitle": subtitle if plain else "没有可安全显示的正文", "preview": plain[:4096], "searchText": plain[:262144], "multiline": multiline, "lineCount": lines, "icon": "article"})
+            return result, None, None
+        stripped = text.strip()
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        urls = [line for line in lines if line.startswith("file://")]
+        operation = lines[0] if lines and lines[0] in {"copy", "cut"} else None
+        if operation:
+            urls = [line for line in lines[1:] if line.startswith("file://")]
+        if urls and len(urls) == len(lines) - (1 if operation else 0):
+            files = [file_metadata(uri) for uri in urls]
+            result.update({"payloadKind": "file-list" if len(files) > 1 else "file", "mimeType": "x-special/gnome-copied-files" if operation else "text/uri-list", "files": files, "fileCount": len(files), "fileOperation": operation, "title": f"{len(files)} 个文件" if len(files) > 1 else files[0]["name"], "subtitle": "、".join(item["name"] for item in files[:3]), "icon": "file_copy" if len(files) > 1 else files[0]["icon"]})
+            return result, None, None
+        title, subtitle, line_count, multiline = text_display(text)
+        subtype = "url" if stripped.startswith(("http://", "https://")) and " " not in stripped else "plain"
+        result.update({"payloadKind": "text", "textSubtype": subtype, "mimeType": "text/plain;charset=utf-8", "title": title, "subtitle": subtitle, "icon": "link" if subtype == "url" else "content_paste", "preview": text[:4096], "searchText": text[:262144], "multiline": multiline, "lineCount": line_count})
+        return result, None, None
+    result["mimeType"] = "application/octet-stream"
+    result["subtitle"] = f"未知二进制 · {len(data)} B"
+    return result, None, None
+
+
+def inspect_payload(entry_id: str, data: bytes, create_preview: bool = True) -> tuple[dict | None, dict | None]:
+    payload, payload_error, _ = _inspect_payload(entry_id, data, create_preview)
+    return payload, payload_error
+
+
+def lightweight(entry_id: str, preview: str) -> dict:
+    result = base_entry(entry_id)
+    image_marker = re.match(r"^\[\[ binary data ([0-9.]+ [A-Za-z]+) ([^ ]+) ([0-9]+)x([0-9]+) \]\]$", preview)
+    if image_marker:
+        fmt = image_marker.group(2).lower()
+        result.update({"payloadKind": "image", "textSubtype": None, "title": "图片剪贴板", "subtitle": f"{fmt.upper()} · {image_marker.group(3)}×{image_marker.group(4)}", "icon": "image", "mimeType": "image/jpeg" if fmt == "jpg" else "image/" + fmt, "width": int(image_marker.group(3)), "height": int(image_marker.group(4))})
+    else:
+        title, subtitle, count, multiline = text_display(preview)
+        result.update({"payloadKind": "text", "textSubtype": "plain", "mimeType": "text/plain;charset=utf-8", "title": title, "subtitle": subtitle, "preview": preview if not preview.lstrip().startswith("<") else "", "icon": "article" if preview.lstrip().startswith("<") else "content_paste", "multiline": multiline, "lineCount": count})
+    return result
+
+
+def common_payload(command: str, **values) -> dict:
+    return {"schemaVersion": 1, "command": command, "dependencies": dependencies(), "capabilities": CAPABILITIES, **values}
+
+
+def run_command(args) -> Result:
+    command = f"clipboard.{args.action}"
+    deps = dependencies()
+    cliphist = executable("cliphist")
+    wl_copy = executable("wl-copy")
+    if args.action == "watch":
+        wl_paste = executable("wl-paste")
+        if not cliphist or not wl_paste:
+            return fail(command, DEPENDENCY_FAILURE, "clipboard_dependency_unavailable", "cliphist and wl-paste are required for the watcher", dependencies=deps)
+        runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+        if not runtime:
+            return fail(command, GENERAL_FAILURE, "runtime_directory_unavailable", "XDG_RUNTIME_DIR is required for the clipboard watcher")
+        lock_path = Path(runtime) / "key" / "clipboard-watch.lock"
+        try:
+            lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            lock = lock_path.open("a+")
+            os.chmod(lock_path, 0o600)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.set_inheritable(lock.fileno(), True)
+        except (BlockingIOError, OSError) as exc:
+            try:
+                lock.close()
+            except UnboundLocalError:
+                pass
+            if isinstance(exc, BlockingIOError):
+                return fail(command, GENERAL_FAILURE, "clipboard_watcher_already_running", "a clipboard watcher is already active")
+            return fail(command, GENERAL_FAILURE, "watcher_lock_failed", str(exc))
+        key = shutil.which("key") or os.environ.get("CLAVIS_KEY") or os.path.realpath(os.sys.argv[0])
+        try:
+            os.execv(wl_paste, [wl_paste, "--watch", key, "clipboard", "store"])
+        finally:
+            lock.close()
+    if args.action == "store":
+        return store(command, cliphist, deps)
+    if args.action == "status":
+        available = bool(cliphist and wl_copy and watcher_running())
+        return Result(0 if available else DEPENDENCY_FAILURE, command, common_payload(command, available=available, canList=bool(cliphist), canRestore=bool(cliphist and wl_copy), watcherRunning=watcher_running(), error=None if available else error("cliphist_watcher_inactive" if cliphist and wl_copy else "clipboard_dependency_unavailable", "cliphist watcher is inactive" if cliphist and wl_copy else "cliphist and wl-copy are required")), "available" if available else "cliphist watcher is inactive", not available)
+    if args.action == "list":
+        if not cliphist:
+            return Result(DEPENDENCY_FAILURE, command, common_payload(command, available=False, canList=False, canRestore=False, watcherRunning=False, entries=[], error=error("cliphist_unavailable", "cliphist is not installed")), "cliphist is not installed", True)
+        process = run(cliphist, ["list"])
+        if not process or process.returncode != 0:
+            return fail(command, GENERAL_FAILURE, "cliphist_list_failed", "unable to read clipboard history", dependencies=deps, capabilities=CAPABILITIES, entries=[])
+        entries = []
+        limit = min(max(1, args.limit), MAX_LIMIT)
+        for line in process.stdout.splitlines():
+            if len(entries) >= limit or b"\t" not in line:
+                continue
+            raw_id, raw_preview = line.split(b"\t", 1)
+            if raw_id.isdigit() and int(raw_id) > 0:
+                entries.append(lightweight(raw_id.decode(), raw_preview.decode(errors="replace")))
+        watching = watcher_running()
+        inactive = not entries and not watching
+        return Result(DEPENDENCY_FAILURE if inactive else 0, command, common_payload(command, available=bool(wl_copy), canList=True, canRestore=bool(wl_copy), watcherRunning=watching, entries=entries, error=error("cliphist_watcher_inactive", "cliphist watcher is inactive") if inactive else None), "cliphist watcher is inactive" if inactive else f"{len(entries)} clipboard entries", inactive)
+    if args.action == "clear":
+        if not cliphist:
+            return fail(command, DEPENDENCY_FAILURE, "cliphist_unavailable", "cliphist is not installed", dependencies=deps)
+        process = run(cliphist, ["wipe"])
+        good = bool(process and process.returncode == 0)
+        return Result(0 if good else GENERAL_FAILURE, command, common_payload(command, available=True, error=None if good else error("cliphist_clear_failed", "unable to clear clipboard history")), "Clipboard history cleared" if good else "unable to clear clipboard history", not good)
+    if not cliphist:
+        return fail(command, DEPENDENCY_FAILURE, "cliphist_unavailable", "cliphist is not installed", dependencies=deps)
+    entry_id = str(args.id)
+    if not entry_id.isdigit() or int(entry_id) <= 0:
+        return fail(command, 2, "usage_error", "clipboard entry id must be a positive decimal integer")
+    if args.action == "delete":
+        process = run(cliphist, ["delete"], entry_id.encode())
+        good = bool(process and process.returncode == 0)
+        return Result(0 if good else GENERAL_FAILURE, command, common_payload(command, id=entry_id, available=True, error=None if good else error("cliphist_delete_failed", "unable to delete clipboard entry")), "Clipboard entry deleted" if good else "unable to delete clipboard entry", not good)
+    if args.action == "inspect":
+        process = run(cliphist, ["decode"], entry_id.encode())
+        if not process or process.returncode != 0:
+            return fail(command, GENERAL_FAILURE, "clipboard_inspect_failed", "unable to decode clipboard entry", id=entry_id, dependencies=deps)
+        payload, payload_error = inspect_payload(entry_id, process.stdout, True)
+        if payload_error:
+            return Result(GENERAL_FAILURE, command, common_payload(command, id=entry_id, available=True, error=payload_error), payload_error["message"], True)
+        return Result(0, command, common_payload(command, **payload, available=True, error=None), "Clipboard entry inspected")
+    if args.action == "restore":
+        if not wl_copy:
+            return fail(command, DEPENDENCY_FAILURE, "wl_copy_unavailable", "wl-copy is not installed", id=entry_id, dependencies=deps)
+        process = run(cliphist, ["decode"], entry_id.encode())
+        if not process or process.returncode != 0:
+            return fail(command, GENERAL_FAILURE, "cliphist_decode_failed", "unable to decode clipboard entry", id=entry_id, dependencies=deps)
+        payload, payload_error, restore_data = _inspect_payload(entry_id, process.stdout, False)
+        if payload_error:
+            return Result(GENERAL_FAILURE, command, common_payload(command, id=entry_id, error=payload_error), payload_error["message"], True)
+        mime = str(payload.get("mimeType") or "")
+        copy_args = ["--type", mime] if mime else []
+        copy = run(wl_copy, copy_args, restore_data if restore_data is not None else process.stdout)
+        good = bool(copy and copy.returncode == 0)
+        return Result(0 if good else GENERAL_FAILURE, command, common_payload(command, id=entry_id, payloadKind=payload.get("payloadKind"), mimeType=mime, available=True, error=None if good else error("wl_copy_failed", "unable to write clipboard entry")), "Clipboard entry restored" if good else "unable to write clipboard entry", not good)
+    return fail("clipboard", 2, "usage_error", f"unknown clipboard action: {args.action}")
+
+
+def store(command: str, cliphist: str | None, deps: dict) -> Result:
+    wl_paste = executable("wl-paste")
+    if not cliphist or not wl_paste:
+        return fail(command, DEPENDENCY_FAILURE, "clipboard_dependency_unavailable", "cliphist and wl-paste are required", dependencies=deps)
+    if os.environ.get("CLIPBOARD_STATE", "").lower() == "sensitive":
+        return Result(0, command, common_payload(command, available=True, stored=False, skippedSensitive=True, error=None), "Sensitive clipboard entry skipped")
+    types = run(wl_paste, ["--list-types"])
+    supported = ["image/png", "image/jpeg", "image/webp", "image/gif", "text/html", "text/plain;charset=utf-8", "text/plain"]
+    available_types = (types.stdout.decode(errors="replace").splitlines() if types and types.returncode == 0 else [])
+    selected = next((value for value in supported if value in available_types), "")
+    if not selected:
+        return fail(command, GENERAL_FAILURE, "clipboard_mime_unsupported", "clipboard selection has no supported MIME", dependencies=deps)
+    selection = run(wl_paste, ["--type", selected])
+    if not selection or selection.returncode != 0 or len(selection.stdout) > MAX_PAYLOAD:
+        return fail(command, GENERAL_FAILURE, "clipboard_read_failed", "unable to read clipboard selection", dependencies=deps)
+    saved = run(cliphist, ["store"], selection.stdout)
+    good = bool(saved and saved.returncode == 0)
+    return Result(0 if good else GENERAL_FAILURE, command, common_payload(command, available=True, stored=good, selectedMime=selected, error=None if good else error("cliphist_store_failed", "unable to store clipboard entry")), "Clipboard entry stored" if good else "unable to store clipboard entry", not good)
