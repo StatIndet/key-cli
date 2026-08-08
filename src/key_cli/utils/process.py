@@ -53,13 +53,21 @@ def capture(pid: int, expected_executable: str = "") -> Identity:
     return Identity(pid, start_ticks(pid), expected_executable or executable(pid))
 
 
-def wait_for_identity(pid: int, expected_executable: str = "", timeout: float = 1.0) -> Identity:
+def wait_for_identity(
+    pid: int,
+    expected_executable: str = "",
+    argument: str = "",
+    timeout: float = 1.0,
+) -> Identity:
     deadline = time.monotonic() + timeout
     identity = capture(pid, expected_executable)
     while time.monotonic() < deadline:
         if identity.start_ticks > 0 and (
             not expected_executable
             or executable(pid) in {expected_executable, os.path.basename(expected_executable)}
+        ) and (
+            not argument
+            or any(os.fsencode(argument) in value for value in command_line(pid))
         ):
             return identity
         time.sleep(0.05)

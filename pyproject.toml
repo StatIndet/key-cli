@@ -27,6 +27,9 @@ where = ["src"]
 [tool.setuptools.package-data]
 key_cli = ["py.typed"]
 
+[tool.setuptools.data-files]
+"lib/systemd/user" = ["systemd/user/clavis-clipboard.service"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

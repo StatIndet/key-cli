@@ -51,6 +51,15 @@ def response(state: dict[str, Any], command: str, *, ok_value: bool, error_value
 def active_state(kind: str, executable: str, argument: str = "") -> tuple[dict[str, Any], bool]:
     state = load(kind)
     identity = process_fields(state)
+    if state.get("state") == "error" and _matches(identity, executable, argument):
+        # A previous key version could report a startup race after the
+        # recorder had already exec'd.  Recover only when the saved PID,
+        # start time, executable, and optional output argument still match.
+        state["state"] = "recording"
+        state["error"] = None
+        state["updatedAtMs"] = now_ms()
+        save(kind, state)
+        return state, True
     is_active = state.get("state") in {"starting", "recording", "paused", "stopping", "finalizing"}
     if is_active and not _matches(identity, executable, argument):
         state["state"] = "error"

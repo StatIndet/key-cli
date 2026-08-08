@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from ..utils.output import DEPENDENCY_FAILURE, GENERAL_FAILURE, Result, error, fail, ok
+from ..utils.executable import current_key_executable
 
 
 MAX_PAYLOAD = 64 * 1024 * 1024
@@ -27,29 +28,45 @@ def executable(name: str) -> str | None:
 
 
 def dependencies() -> dict[str, bool | None]:
-    return {"cliphist": executable("cliphist") is not None, "wlCopy": executable("wl-copy") is not None, "wlPaste": executable("wl-paste") is not None}
+    return {
+        "cliphist": executable("cliphist") is not None,
+        "wlCopy": executable("wl-copy") is not None,
+        "wlPaste": executable("wl-paste") is not None,
+    }
+
+
+def watcher_lock_path() -> Path | None:
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    return Path(runtime) / "key" / "clipboard-watch.lock" if runtime else None
+
+
+def acquire_watcher_lock():
+    lock_path = watcher_lock_path()
+    if lock_path is None:
+        raise OSError("XDG_RUNTIME_DIR is required for the clipboard watcher")
+    lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock = lock_path.open("a+")
+    try:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Python opens files close-on-exec by default.  The lock must survive
+        # the exec from key clipboard watch into wl-paste.
+        os.set_inheritable(lock.fileno(), True)
+    except Exception:
+        lock.close()
+        raise
+    return lock
 
 
 def watcher_running() -> bool:
-    override = os.environ.get("CLAVIS_CLIPBOARD_WATCHER_RUNNING", "").lower()
-    if override in {"1", "true", "yes"}:
-        return True
-    if override in {"0", "false", "no"}:
-        return False
-    proc = Path("/proc")
     try:
-        for directory in proc.iterdir():
-            if not directory.name.isdigit():
-                continue
-            try:
-                values = directory.joinpath("cmdline").read_bytes().decode(errors="replace").split("\0")
-            except OSError:
-                continue
-            joined = " ".join(values)
-            if ("cliphist" in joined and "store" in joined) or ("key" in joined and "clipboard" in joined and "store" in joined):
-                return True
+        lock = acquire_watcher_lock()
+    except BlockingIOError:
+        return True
     except OSError:
-        pass
+        return False
+    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    lock.close()
     return False
 
 
@@ -254,22 +271,14 @@ def run_command(args) -> Result:
         runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
         if not runtime:
             return fail(command, GENERAL_FAILURE, "runtime_directory_unavailable", "XDG_RUNTIME_DIR is required for the clipboard watcher")
-        lock_path = Path(runtime) / "key" / "clipboard-watch.lock"
+        lock = None
         try:
-            lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            lock = lock_path.open("a+")
-            os.chmod(lock_path, 0o600)
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            os.set_inheritable(lock.fileno(), True)
+            lock = acquire_watcher_lock()
         except (BlockingIOError, OSError) as exc:
-            try:
-                lock.close()
-            except UnboundLocalError:
-                pass
             if isinstance(exc, BlockingIOError):
                 return fail(command, GENERAL_FAILURE, "clipboard_watcher_already_running", "a clipboard watcher is already active")
             return fail(command, GENERAL_FAILURE, "watcher_lock_failed", str(exc))
-        key = shutil.which("key") or os.environ.get("CLAVIS_KEY") or os.path.realpath(os.sys.argv[0])
+        key = current_key_executable()
         try:
             os.execv(wl_paste, [wl_paste, "--watch", key, "clipboard", "store"])
         finally:
@@ -277,8 +286,9 @@ def run_command(args) -> Result:
     if args.action == "store":
         return store(command, cliphist, deps)
     if args.action == "status":
-        available = bool(cliphist and wl_copy and watcher_running())
-        return Result(0 if available else DEPENDENCY_FAILURE, command, common_payload(command, available=available, canList=bool(cliphist), canRestore=bool(cliphist and wl_copy), watcherRunning=watcher_running(), error=None if available else error("cliphist_watcher_inactive" if cliphist and wl_copy else "clipboard_dependency_unavailable", "cliphist watcher is inactive" if cliphist and wl_copy else "cliphist and wl-copy are required")), "available" if available else "cliphist watcher is inactive", not available)
+        watching = watcher_running()
+        available = bool(cliphist and wl_copy and watching)
+        return Result(0 if available else DEPENDENCY_FAILURE, command, common_payload(command, available=available, canList=bool(cliphist), canRestore=bool(cliphist and wl_copy), watcherRunning=watching, error=None if available else error("cliphist_watcher_inactive" if cliphist and wl_copy else "clipboard_dependency_unavailable", "cliphist watcher is inactive" if cliphist and wl_copy else "cliphist and wl-copy are required")), "available" if available else "cliphist watcher is inactive", not available)
     if args.action == "list":
         if not cliphist:
             return Result(DEPENDENCY_FAILURE, command, common_payload(command, available=False, canList=False, canRestore=False, watcherRunning=False, entries=[], error=error("cliphist_unavailable", "cliphist is not installed")), "cliphist is not installed", True)

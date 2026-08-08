@@ -1,0 +1,18 @@
+[Unit]
+Description=Clavis clipboard watcher
+Documentation=https://github.com/archirithm/Clavis
+Requisite=niri.service
+PartOf=niri.service
+After=niri.service
+StartLimitIntervalSec=30
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=key clipboard watch
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=niri.service

@@ -12,7 +12,7 @@ COMMANDS = {
     "qs": {"features": ["shell", "ipc"]},
     "gpu-screen-recorder": {"features": ["record"]},
     "slurp": {"features": ["record-region"]},
-    "ffmpeg": {"features": ["audio"]},
+    "ffmpeg": {"features": ["audio", "record-gif"]},
     "ffprobe": {"features": ["audio-validation"]},
     "pactl": {"features": ["audio-source-resolution"]},
     "cliphist": {"features": ["clipboard-list", "clipboard-store"]},
@@ -58,6 +58,8 @@ def run(args) -> Result:
         "shell": commands["qs"]["available"],
         "ipc": commands["qs"]["available"],
         "record": commands["gpu-screen-recorder"]["available"],
+        "record-gif": commands["gpu-screen-recorder"]["available"]
+        and commands["ffmpeg"]["available"],
         "record-region": commands["gpu-screen-recorder"]["available"]
         and commands["slurp"]["available"],
         "audio": all(commands[name]["available"] for name in ("ffmpeg", "ffprobe", "pactl")),

@@ -120,11 +120,18 @@ def start(args) -> Result:
         session["error"] = error("audio_recorder_start_failed", start_error or "unable to start ffmpeg")
         save("audio", session)
         return response(session, "audio.start", ok_value=False, error_value=session["error"], exitCode=RECORDER_START_FAILURE)
-    identity = wait_for_identity(process.pid, "ffmpeg")
+    identity = wait_for_identity(process.pid, "ffmpeg", str(temporary))
     session.update({"state": "recording", "pid": process.pid, "processStartTicks": str(identity.start_ticks), "processStartedAtMs": now_ms()})
     if not identity.start_ticks or not matches(identity, "ffmpeg", str(temporary)):
+        # This PID was created by this start operation.  If its identity is
+        # still verifiable, stop it before reporting failure so a startup
+        # race cannot leave an untracked ffmpeg process running.
+        if identity.start_ticks and matches(identity, "ffmpeg"):
+            stop_verified(identity, "ffmpeg")
         session["state"] = "error"
         session["error"] = error("audio_recorder_start_failed", "ffmpeg exited before its identity could be verified")
+        session["pid"] = 0
+        session["processStartTicks"] = None
         save("audio", session)
         return response(session, "audio.start", ok_value=False, error_value=session["error"], exitCode=RECORDER_START_FAILURE)
     save("audio", session)

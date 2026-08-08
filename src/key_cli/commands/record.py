@@ -61,6 +61,57 @@ def _notify(title: str, body: str) -> None:
             pass
 
 
+def _gif_filter(fps: int) -> str:
+    safe_fps = max(1, min(240, int(fps or 60)))
+    return (
+        f"fps={safe_fps},split[s0][s1];"
+        "[s0]palettegen=stats_mode=diff[p];"
+        "[s1][p]paletteuse=dither=sierra2_4a"
+    )
+
+
+def _convert_gif(temporary: Path, output: Path, fps: int) -> tuple[bool, str]:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False, "ffmpeg is required to process GIF recordings"
+
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(temporary),
+        "-filter_complex",
+        _gif_filter(fps),
+        "-an",
+        "-f",
+        "gif",
+        str(output),
+    ]
+    try:
+        process = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return False, str(exc)
+
+    if process.returncode != 0:
+        message = (process.stderr or process.stdout or "ffmpeg GIF conversion failed").strip()
+        return False, message[-1024:]
+    try:
+        if not output.is_file() or output.stat().st_size == 0:
+            return False, "ffmpeg produced an empty GIF"
+    except OSError as exc:
+        return False, str(exc)
+    return True, ""
+
+
 def run(args) -> Result:
     try:
         with locked("record"):
@@ -90,6 +141,8 @@ def start(args) -> Result:
         return fail("record.start", DEPENDENCY_FAILURE, "dependency_missing", "gpu-screen-recorder is not installed", exitCode=DEPENDENCY_FAILURE)
     if args.type not in {"video", "gif"}:
         return fail("record.start", 2, "usage_error", "recording type must be video or gif", exitCode=2)
+    if args.type == "gif" and not shutil.which("ffmpeg"):
+        return fail("record.start", DEPENDENCY_FAILURE, "dependency_missing", "ffmpeg is required for GIF recording", dependency="ffmpeg", exitCode=DEPENDENCY_FAILURE)
     geometry = _geometry(args.geometry) if args.geometry else None
     if args.target == "region" and geometry is None:
         geometry = _select_region()
@@ -106,9 +159,10 @@ def start(args) -> Result:
         return fail("record.start", GENERAL_FAILURE, "output_directory_unwritable", str(exc), exitCode=GENERAL_FAILURE)
 
     suffix = "gif" if args.type == "gif" else "mp4"
+    temporary_suffix = "mp4" if args.type == "gif" else suffix
     stem = f"recording_{datetime.now().strftime('%Y%m%d_%H-%M-%S')}_{os.getpid()}"
     output = directory / f"{stem}.{suffix}"
-    temporary = directory / f".{stem}.partial.{suffix}"
+    temporary = directory / f".{stem}.partial.{temporary_suffix}"
     state = new_state("record")
     state.update({
         "state": "starting",
@@ -134,15 +188,21 @@ def start(args) -> Result:
         state["error"] = error("recorder_start_failed", start_error or "unable to start recorder")
         save("record", state)
         return response(state, "record.start", ok_value=False, error_value=state["error"], exitCode=RECORDER_START_FAILURE)
-    identity = wait_for_identity(process.pid, "gpu-screen-recorder")
+    identity = wait_for_identity(process.pid, "gpu-screen-recorder", str(temporary))
     state.update({"state": "recording", "pid": process.pid, "processStartTicks": str(identity.start_ticks), "processStartedAtMs": now_ms()})
     if not identity.start_ticks or not matches(identity, "gpu-screen-recorder", str(temporary)):
+        # This PID was created by this start operation.  If its identity is
+        # still verifiable, stop it before reporting failure so a startup
+        # race cannot leave an untracked recorder running.
+        if identity.start_ticks and matches(identity, "gpu-screen-recorder"):
+            stop_verified(identity, "gpu-screen-recorder")
         state["state"] = "error"
         state["error"] = error("recorder_start_failed", "recorder exited before its identity could be verified")
+        state["pid"] = 0
+        state["processStartTicks"] = None
         save("record", state)
         return response(state, "record.start", ok_value=False, error_value=state["error"], exitCode=RECORDER_START_FAILURE)
     save("record", state)
-    _notify("Recording started", str(output))
     return response(state, "record.start", ok_value=True, error_value=None, exitCode=0)
 
 
@@ -162,7 +222,26 @@ def _finalize(state: dict) -> Result:
         return response(state, "record.stop", ok_value=False, error_value=state["error"], exitCode=POSTPROCESS_FAILURE)
     try:
         output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.replace(temporary, output)
+        if state.get("type") == "gif":
+            converted, conversion_error = _convert_gif(
+                temporary,
+                output,
+                int(state.get("fps") or 60),
+            )
+            if not converted:
+                try:
+                    output.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                state["state"] = "error"
+                state["error"] = error("gif_conversion_failed", conversion_error)
+                state["pid"] = 0
+                state["processStartTicks"] = None
+                save("record", state)
+                return response(state, "record.stop", ok_value=False, error_value=state["error"], exitCode=POSTPROCESS_FAILURE)
+            temporary.unlink()
+        else:
+            os.replace(temporary, output)
     except OSError as exc:
         state["state"] = "error"
         state["error"] = error("recording_finalize_failed", str(exc))
