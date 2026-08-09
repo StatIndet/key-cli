@@ -150,6 +150,32 @@ def test_file_metadata_keeps_file_type_icons(
     assert metadata["icon"] == icon
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["else_if.cpp", "generate_cookie.py", "test_wavy.js", "widget.qml", "run.sh"],
+)
+def test_file_metadata_classifies_source_and_script_files_as_code(
+    tmp_path, name: str
+) -> None:
+    path = tmp_path / name
+    path.write_text("source", encoding="utf-8")
+
+    metadata = file_metadata(path.as_uri())
+
+    assert metadata["category"] == "code"
+    assert metadata["icon"] == "code"
+
+
+def test_file_metadata_keeps_plain_documents_out_of_code_category(tmp_path) -> None:
+    path = tmp_path / "notes.txt"
+    path.write_text("notes", encoding="utf-8")
+
+    metadata = file_metadata(path.as_uri())
+
+    assert metadata["category"] == "document"
+    assert metadata["icon"] == "description"
+
+
 def test_plain_path_text_is_not_promoted_to_file(tmp_path) -> None:
     existing_path = tmp_path / "existing-folder"
     existing_path.mkdir()

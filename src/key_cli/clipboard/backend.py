@@ -48,6 +48,33 @@ URI_FILE_SCHEMES = {
     "trash",
 }
 GNOME_FILE_OPERATIONS = {"copy", "cut"}
+CODE_FILE_EXTENSIONS = {
+    ".c",
+    ".h",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".hpp",
+    ".rs",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".lua",
+    ".qml",
+    ".java",
+    ".kt",
+    ".kts",
+    ".go",
+    ".rb",
+    ".php",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+}
+CODE_FILE_NAMES = {"makefile", "cmakelists.txt", "dockerfile"}
 
 
 def executable(name: str) -> str | None:
@@ -262,6 +289,10 @@ def file_metadata(uri: str) -> dict:
         "name": name,
         "parent": str(path.parent) if path else f"{scheme}://{parsed.netloc}",
     }
+    is_code_file = (
+        name.lower() in CODE_FILE_NAMES
+        or Path(name).suffix.lower() in CODE_FILE_EXTENSIONS
+    )
     if value["directory"]:
         value.update({"category": "folder", "icon": "folder", "mimeType": "inode/directory"})
     elif value["mimeType"].startswith("image/"):
@@ -276,6 +307,8 @@ def file_metadata(uri: str) -> dict:
         value.update({"category": "audio", "icon": "audio_file"})
     elif value["mimeType"] == "application/pdf":
         value.update({"category": "pdf", "icon": "picture_as_pdf"})
+    elif is_code_file:
+        value.update({"category": "code", "icon": "code"})
     elif value["mimeType"].startswith("text/"):
         value.update({"category": "document", "icon": "description"})
     return value
