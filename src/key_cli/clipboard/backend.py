@@ -11,16 +11,43 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from ..utils.output import DEPENDENCY_FAILURE, GENERAL_FAILURE, Result, error, fail, ok
+from ..utils.output import DEPENDENCY_FAILURE, GENERAL_FAILURE, Result, error, fail
 from ..utils.executable import current_key_executable
 
 
 MAX_PAYLOAD = 64 * 1024 * 1024
 MAX_LIMIT = 500
 CAPABILITIES = {"inspect": True, "preview": True, "mimeRestore": True, "mimeAwareStore": True}
+FILE_MIME_TYPES = ("x-special/gnome-copied-files", "text/uri-list")
+IMAGE_MIME_TYPES = (
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+)
+PLAIN_TEXT_MIME_TYPES = ("text/plain;charset=utf-8", "text/plain")
+HTML_MIME_TYPES = ("text/html", "text/html;charset=utf-8")
+URI_FILE_SCHEMES = {
+    "afc",
+    "computer",
+    "dav",
+    "davs",
+    "desktop",
+    "file",
+    "ftp",
+    "gphoto2",
+    "mtp",
+    "network",
+    "recent",
+    "sftp",
+    "smb",
+    "trash",
+}
+GNOME_FILE_OPERATIONS = {"copy", "cut"}
 
 
 def executable(name: str) -> str | None:
@@ -77,16 +104,80 @@ def run(program: str, arguments: list[str], input_data: bytes | None = None, tim
         return None
 
 
+def run_wl_copy(program: str, arguments: list[str], input_data: bytes) -> subprocess.CompletedProcess[bytes] | None:
+    """Start a detached foreground wl-copy owner and verify startup.
+
+    The default wl-copy mode forks before returning.  That is useful for a
+    terminal command, but it makes a short-lived CLI wrapper observe the
+    parent exit before the selection owner has published its offer.  The
+    foreground mode gives us a process whose lifetime represents ownership of
+    the selection; it must therefore be started with Popen and left running.
+    """
+    try:
+        process = subprocess.Popen(
+            [program, "--foreground", *arguments],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            if process.stdin is None:
+                process.kill()
+                process.wait()
+                return None
+            process.stdin.write(input_data)
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            process.kill()
+            process.wait()
+            return None
+
+        deadline = time.monotonic() + 0.25
+        while process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if process.returncode is None:
+            # The foreground owner is intentionally detached from this short
+            # lived CLI process.  Mark the Popen handle settled so its
+            # destructor does not emit a false ResourceWarning on exit.
+            process.returncode = 0
+        return subprocess.CompletedProcess(
+            [program, "--foreground", *arguments],
+            process.returncode if process.returncode is not None else 0,
+        )
+    except OSError:
+        return None
+
+
 def base_entry(entry_id: str) -> dict:
-    return {"id": entry_id, "payloadKind": "binary", "textSubtype": None, "title": "二进制剪贴板", "subtitle": "未知二进制内容", "icon": "data_object", "preview": "", "previewUrl": "", "mimeType": "", "byteSize": 0, "width": 0, "height": 0, "fileCount": 0, "files": [], "fileOperation": None, "multiline": False, "lineCount": 0, "restorable": True}
+    return {
+        "id": entry_id,
+        "payloadKind": "binary",
+        "textSubtype": None,
+        "icon": "data_object",
+        "preview": "",
+        "searchText": "",
+        "previewUrl": "",
+        "mimeType": "",
+        "byteSize": 0,
+        "width": 0,
+        "height": 0,
+        "fileCount": 0,
+        "files": [],
+        "fileOperation": None,
+        "operation": None,
+        "multiline": False,
+        "lineCount": 0,
+        "restorable": True,
+    }
 
 
 def text_display(value: str) -> tuple[str, str, int, bool]:
     lines = [line.replace("\t", " ").strip() for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
     lines = [line for line in lines if line]
     if not lines:
-        return "空文本", "文本", 0, False
-    return lines[0][:240], (lines[1] + ("…" if len(lines) > 2 else ""))[:300] if len(lines) > 1 else "文本", len(lines), len(lines) > 1
+        return "", "", 0, False
+    return lines[0][:240], (lines[1] + ("…" if len(lines) > 2 else ""))[:300] if len(lines) > 1 else "", len(lines), len(lines) > 1
 
 
 def image_info(data: bytes) -> tuple[str, int, int] | None:
@@ -133,13 +224,52 @@ def preview_path(entry_id: str, data: bytes, mime: str) -> str:
 
 def file_metadata(uri: str) -> dict:
     parsed = urlparse(uri)
-    path = Path(unquote(parsed.path)) if parsed.scheme == "file" and parsed.netloc in {"", "localhost"} else None
-    name = path.name if path else Path(parsed.path).name
-    value = {"uri": uri, "local": path is not None, "exists": bool(path and path.exists()), "readable": bool(path and os.access(path, os.R_OK)), "directory": bool(path and path.is_dir()), "byteSize": path.stat().st_size if path and path.is_file() else 0, "mimeType": mimetypes.guess_type(name)[0] or "", "category": "file", "icon": "file_present", "previewUrl": "", "name": name, "parent": str(path.parent) if path else parsed.scheme + "://" + parsed.netloc}
+    scheme = parsed.scheme.lower()
+    path = (
+        Path(unquote(parsed.path))
+        if scheme == "file" and parsed.netloc in {"", "localhost"}
+        else None
+    )
+    name = path.name if path else unquote(Path(parsed.path).name)
+    if not name:
+        name = parsed.netloc or scheme or uri
+
+    exists = False
+    readable = False
+    directory = False
+    byte_size = 0
+    if path is not None:
+        try:
+            exists = path.exists()
+            readable = os.access(path, os.R_OK)
+            directory = path.is_dir()
+            if path.is_file():
+                byte_size = path.stat().st_size
+        except OSError:
+            pass
+
+    value = {
+        "uri": uri,
+        "local": path is not None,
+        "exists": exists,
+        "readable": readable,
+        "directory": directory,
+        "byteSize": byte_size,
+        "mimeType": mimetypes.guess_type(name, strict=False)[0] or "",
+        "category": "file",
+        "icon": "file_present",
+        "previewUrl": "",
+        "name": name,
+        "parent": str(path.parent) if path else f"{scheme}://{parsed.netloc}",
+    }
     if value["directory"]:
         value.update({"category": "folder", "icon": "folder", "mimeType": "inode/directory"})
     elif value["mimeType"].startswith("image/"):
-        value.update({"category": "image", "icon": "image", "previewUrl": uri})
+        value.update({
+            "category": "image",
+            "icon": "image",
+            "previewUrl": uri if value["local"] and value["exists"] else "",
+        })
     elif value["mimeType"].startswith("video/"):
         value.update({"category": "video", "icon": "video_file"})
     elif value["mimeType"].startswith("audio/"):
@@ -151,7 +281,59 @@ def file_metadata(uri: str) -> dict:
     return value
 
 
+def select_mime(available_types: list[str]) -> str:
+    """Choose a clipboard offer by semantic class, then by safe MIME order."""
+    available = {value.strip() for value in available_types if value.strip()}
+
+    # File-manager offers carry information that text/plain cannot reproduce.
+    # Prefer GNOME's operation-bearing form when both file MIME types exist.
+    for mime in FILE_MIME_TYPES:
+        if mime in available:
+            return mime
+    for mime in IMAGE_MIME_TYPES:
+        if mime in available:
+            return mime
+    for mime in HTML_MIME_TYPES:
+        if mime in available:
+            return mime
+    for mime in PLAIN_TEXT_MIME_TYPES:
+        if mime in available:
+            return mime
+    return ""
+
+
+def parse_uri_list(text: str) -> tuple[str | None, list[str]]:
+    """Parse URI-list syntax without treating filesystem-looking text as a URI."""
+    raw_lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    lines = [line for line in raw_lines if line and not line.startswith("#")]
+    operation = lines[0].lower() if lines and lines[0].lower() in GNOME_FILE_OPERATIONS else None
+    uri_lines = lines[1:] if operation else lines
+    if not uri_lines:
+        return operation, []
+
+    for uri in uri_lines:
+        parsed = urlparse(uri)
+        if parsed.scheme.lower() not in URI_FILE_SCHEMES or any(character.isspace() for character in uri):
+            return None, []
+    return operation, uri_lines
+
+
+def file_list_icon(files: list[dict]) -> str:
+    if len(files) <= 1:
+        return str(files[0].get("icon") or "file_present") if files else "file_copy"
+    return "file_copy"
+
+
 HTML_IMAGE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*(['\"])(.*?)\1", re.I | re.S)
+HTML_MARKUP = re.compile(
+    r"^\s*(?:<!doctype\b|<!--|<\?xml\b|"
+    r"<(?:html|head|body|title|meta|link|style|script|p|div|span|a|img|"
+    r"br|hr|h[1-6]|ul|ol|li|table|thead|tbody|tr|td|th|form|input|"
+    r"button|select|option|textarea|strong|em|b|i|u|pre|code|"
+    r"blockquote|section|article|main|header|footer|nav|figure|"
+    r"figcaption|video|audio|source)\b[^>]*>)",
+    re.I | re.S,
+)
 DATA_IMAGE = re.compile(r"^data:(image/(?:png|jpeg|gif|webp));base64,(.+)$", re.I | re.S)
 
 
@@ -197,7 +379,7 @@ def _inspect_payload(entry_id: str, data: bytes, create_preview: bool = True, de
         mime, width, height = image
         if width > 16384 or height > 16384:
             return None, error("clipboard_image_decode_failed", "image dimensions exceed the safe limit"), None
-        result.update({"payloadKind": "image", "title": "图片剪贴板", "subtitle": f"{mime.split('/')[-1].upper()} · {width}×{height} · {len(data)} B", "icon": "image", "mimeType": mime, "width": width, "height": height})
+        result.update({"payloadKind": "image", "icon": "image", "mimeType": mime, "width": width, "height": height})
         if create_preview:
             result["previewUrl"] = preview_path(entry_id, data, mime)
         return result, None, None
@@ -208,7 +390,7 @@ def _inspect_payload(entry_id: str, data: bytes, create_preview: bool = True, de
     if text and any(ord(character) < 32 and character not in "\n\r\t" for character in text):
         text = ""
     if text:
-        if re.match(r"^\s*(?:<!doctype\b|<html\b|<meta\b|<img\b|<div\b|<span\b)", text, re.I):
+        if HTML_MARKUP.match(text):
             embedded, embedded_error, restore_data = _html_image_payload(
                 entry_id, text, create_preview, depth)
             if embedded_error or embedded:
@@ -216,25 +398,28 @@ def _inspect_payload(entry_id: str, data: bytes, create_preview: bool = True, de
             plain = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", text, flags=re.I | re.S)
             plain = re.sub(r"<[^>]+>", " ", plain)
             plain = html.unescape(re.sub(r"\s+", " ", plain)).strip()
-            title, subtitle, lines, multiline = text_display(plain)
-            result.update({"payloadKind": "text", "textSubtype": "plain", "mimeType": "text/html", "title": title if plain else "HTML 内容", "subtitle": subtitle if plain else "没有可安全显示的正文", "preview": plain[:4096], "searchText": plain[:262144], "multiline": multiline, "lineCount": lines, "icon": "article"})
+            _, _, lines, multiline = text_display(plain)
+            result.update({"payloadKind": "text", "textSubtype": "html", "mimeType": "text/html", "preview": plain[:4096], "searchText": plain[:262144], "multiline": multiline, "lineCount": lines, "icon": "article"})
             return result, None, None
         stripped = text.strip()
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        urls = [line for line in lines if line.startswith("file://")]
-        operation = lines[0] if lines and lines[0] in {"copy", "cut"} else None
-        if operation:
-            urls = [line for line in lines[1:] if line.startswith("file://")]
-        if urls and len(urls) == len(lines) - (1 if operation else 0):
+        operation, urls = parse_uri_list(text)
+        if urls:
             files = [file_metadata(uri) for uri in urls]
-            result.update({"payloadKind": "file-list" if len(files) > 1 else "file", "mimeType": "x-special/gnome-copied-files" if operation else "text/uri-list", "files": files, "fileCount": len(files), "fileOperation": operation, "title": f"{len(files)} 个文件" if len(files) > 1 else files[0]["name"], "subtitle": "、".join(item["name"] for item in files[:3]), "icon": "file_copy" if len(files) > 1 else files[0]["icon"]})
+            result.update({
+                "payloadKind": "file-list" if len(files) > 1 else "file",
+                "mimeType": "x-special/gnome-copied-files" if operation else "text/uri-list",
+                "files": files,
+                "fileCount": len(files),
+                "fileOperation": operation,
+                "operation": operation,
+                "icon": file_list_icon(files),
+            })
             return result, None, None
-        title, subtitle, line_count, multiline = text_display(text)
+        _, _, line_count, multiline = text_display(text)
         subtype = "url" if stripped.startswith(("http://", "https://")) and " " not in stripped else "plain"
-        result.update({"payloadKind": "text", "textSubtype": subtype, "mimeType": "text/plain;charset=utf-8", "title": title, "subtitle": subtitle, "icon": "link" if subtype == "url" else "content_paste", "preview": text[:4096], "searchText": text[:262144], "multiline": multiline, "lineCount": line_count})
+        result.update({"payloadKind": "text", "textSubtype": subtype, "mimeType": "text/plain;charset=utf-8", "icon": "link" if subtype == "url" else "content_paste", "preview": text[:4096], "searchText": text[:262144], "multiline": multiline, "lineCount": line_count})
         return result, None, None
     result["mimeType"] = "application/octet-stream"
-    result["subtitle"] = f"未知二进制 · {len(data)} B"
     return result, None, None
 
 
@@ -248,10 +433,24 @@ def lightweight(entry_id: str, preview: str) -> dict:
     image_marker = re.match(r"^\[\[ binary data ([0-9.]+ [A-Za-z]+) ([^ ]+) ([0-9]+)x([0-9]+) \]\]$", preview)
     if image_marker:
         fmt = image_marker.group(2).lower()
-        result.update({"payloadKind": "image", "textSubtype": None, "title": "图片剪贴板", "subtitle": f"{fmt.upper()} · {image_marker.group(3)}×{image_marker.group(4)}", "icon": "image", "mimeType": "image/jpeg" if fmt == "jpg" else "image/" + fmt, "width": int(image_marker.group(3)), "height": int(image_marker.group(4))})
+        result.update({"payloadKind": "image", "textSubtype": None, "icon": "image", "mimeType": "image/jpeg" if fmt == "jpg" else "image/" + fmt, "width": int(image_marker.group(3)), "height": int(image_marker.group(4))})
     else:
-        title, subtitle, count, multiline = text_display(preview)
-        result.update({"payloadKind": "text", "textSubtype": "plain", "mimeType": "text/plain;charset=utf-8", "title": title, "subtitle": subtitle, "preview": preview if not preview.lstrip().startswith("<") else "", "icon": "article" if preview.lstrip().startswith("<") else "content_paste", "multiline": multiline, "lineCount": count})
+        operation, urls = parse_uri_list(preview)
+        if urls:
+            files = [file_metadata(uri) for uri in urls]
+            result.update({
+                "payloadKind": "file-list" if len(files) > 1 else "file",
+                "textSubtype": None,
+                "mimeType": "x-special/gnome-copied-files" if operation else "text/uri-list",
+                "files": files,
+                "fileCount": len(files),
+                "fileOperation": operation,
+                "operation": operation,
+                "icon": file_list_icon(files),
+            })
+        else:
+            _, _, count, multiline = text_display(preview)
+            result.update({"payloadKind": "text", "textSubtype": "html" if HTML_MARKUP.match(preview) else "plain", "mimeType": "text/html" if HTML_MARKUP.match(preview) else "text/plain;charset=utf-8", "preview": preview if not HTML_MARKUP.match(preview) else "", "icon": "article" if HTML_MARKUP.match(preview) else "content_paste", "multiline": multiline, "lineCount": count})
     return result
 
 
@@ -340,7 +539,7 @@ def run_command(args) -> Result:
             return Result(GENERAL_FAILURE, command, common_payload(command, id=entry_id, error=payload_error), payload_error["message"], True)
         mime = str(payload.get("mimeType") or "")
         copy_args = ["--type", mime] if mime else []
-        copy = run(wl_copy, copy_args, restore_data if restore_data is not None else process.stdout)
+        copy = run_wl_copy(wl_copy, copy_args, restore_data if restore_data is not None else process.stdout)
         good = bool(copy and copy.returncode == 0)
         return Result(0 if good else GENERAL_FAILURE, command, common_payload(command, id=entry_id, payloadKind=payload.get("payloadKind"), mimeType=mime, available=True, error=None if good else error("wl_copy_failed", "unable to write clipboard entry")), "Clipboard entry restored" if good else "unable to write clipboard entry", not good)
     return fail("clipboard", 2, "usage_error", f"unknown clipboard action: {args.action}")
@@ -353,9 +552,8 @@ def store(command: str, cliphist: str | None, deps: dict) -> Result:
     if os.environ.get("CLIPBOARD_STATE", "").lower() == "sensitive":
         return Result(0, command, common_payload(command, available=True, stored=False, skippedSensitive=True, error=None), "Sensitive clipboard entry skipped")
     types = run(wl_paste, ["--list-types"])
-    supported = ["image/png", "image/jpeg", "image/webp", "image/gif", "text/html", "text/plain;charset=utf-8", "text/plain"]
     available_types = (types.stdout.decode(errors="replace").splitlines() if types and types.returncode == 0 else [])
-    selected = next((value for value in supported if value in available_types), "")
+    selected = select_mime(available_types)
     if not selected:
         return fail(command, GENERAL_FAILURE, "clipboard_mime_unsupported", "clipboard selection has no supported MIME", dependencies=deps)
     selection = run(wl_paste, ["--type", selected])
