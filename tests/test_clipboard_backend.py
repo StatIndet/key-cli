@@ -36,9 +36,9 @@ def test_cliphist_binary_marker_is_image() -> None:
 def test_html_embedded_image_is_inspectable() -> None:
     data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8 + (16).to_bytes(4, "big") + (8).to_bytes(4, "big")
     html = (
-        "<html><body><img src=\"data:image/png;base64,"
+        '<html><body><img src="data:image/png;base64,'
         + base64.b64encode(data).decode()
-        + "\"></body></html>"
+        + '"></body></html>'
     ).encode()
     payload, error = inspect_payload("8", html, False)
     assert error is None
@@ -64,17 +64,16 @@ def test_store_preserves_file_manager_mime_before_text(monkeypatch: pytest.Monke
         calls.append((program, arguments, input_data))
         if program == "wl-paste" and arguments == ["--list-types"]:
             return subprocess.CompletedProcess(
-                [program, *arguments], 0,
-                stdout=(
-                    b"text/plain\ntext/uri-list\n"
-                    b"x-special/gnome-copied-files\n"
-                ),
+                [program, *arguments],
+                0,
+                stdout=(b"text/plain\ntext/uri-list\nx-special/gnome-copied-files\n"),
                 stderr=b"",
             )
         if program == "wl-paste":
             assert arguments == ["--type", "x-special/gnome-copied-files"]
             return subprocess.CompletedProcess(
-                [program, *arguments], 0,
+                [program, *arguments],
+                0,
                 stdout=b"copy\nfile:///tmp/report.pdf\n",
                 stderr=b"",
             )
@@ -100,9 +99,7 @@ def test_gnome_uri_payload_has_operation_and_never_uses_operation_as_filename() 
     assert operation == "copy"
     assert uris == ["file:///tmp/one", "file:///tmp/two"]
 
-    payload, error = inspect_payload(
-        "9", b"cut\nfile:///tmp/one\nfile:///tmp/two\n", False
-    )
+    payload, error = inspect_payload("9", b"cut\nfile:///tmp/one\nfile:///tmp/two\n", False)
     assert error is None
     assert payload["payloadKind"] == "file-list"
     assert payload["mimeType"] == "x-special/gnome-copied-files"
@@ -137,9 +134,7 @@ def test_file_uri_metadata_is_local_but_recent_uri_is_not_a_path(tmp_path) -> No
         ("notes.txt", "document", "description"),
     ],
 )
-def test_file_metadata_keeps_file_type_icons(
-    tmp_path, name: str, category: str, icon: str
-) -> None:
+def test_file_metadata_keeps_file_type_icons(tmp_path, name: str, category: str, icon: str) -> None:
     path = tmp_path / name
     if category == "folder":
         path.mkdir()
@@ -154,9 +149,7 @@ def test_file_metadata_keeps_file_type_icons(
     "name",
     ["else_if.cpp", "generate_cookie.py", "test_wavy.js", "widget.qml", "run.sh"],
 )
-def test_file_metadata_classifies_source_and_script_files_as_code(
-    tmp_path, name: str
-) -> None:
+def test_file_metadata_classifies_source_and_script_files_as_code(tmp_path, name: str) -> None:
     path = tmp_path / name
     path.write_text("source", encoding="utf-8")
 
@@ -179,15 +172,15 @@ def test_file_metadata_keeps_plain_documents_out_of_code_category(tmp_path) -> N
 def test_plain_path_text_is_not_promoted_to_file(tmp_path) -> None:
     existing_path = tmp_path / "existing-folder"
     existing_path.mkdir()
-    payload, error = inspect_payload(
-        "10", (str(existing_path) + "\n").encode(), False
-    )
+    payload, error = inspect_payload("10", (str(existing_path) + "\n").encode(), False)
     assert error is None
     assert payload["payloadKind"] == "text"
     assert payload["files"] == []
 
 
-def test_wl_copy_does_not_capture_forked_selection_owner_pipes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wl_copy_does_not_capture_forked_selection_owner_pipes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     class FakeStdin:

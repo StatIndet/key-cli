@@ -110,10 +110,20 @@ key doctor --json
 ## Development
 
 ```bash
+python -m pip install -e '.[dev]'
+ruff format .
+ruff format --check .
+ruff check .
 python -m compileall src
-python -m build --wheel
 python -m pytest
+python -m build --wheel
+scripts/check.sh
 ```
+
+The machine-facing JSON contract is documented in [`docs/protocol.md`](docs/protocol.md).
+`scripts/check.sh` is the single local quality gate; it runs Ruff, `compileall`, pytest,
+wheel creation and a check that the packaged clipboard service is present. It does not
+install system files or start services.
 
 ## License
 

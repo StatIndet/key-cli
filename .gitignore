@@ -14,3 +14,5 @@ compile_commands.json
 *.so.*
 *.log
 __pycache__/
+.pytest_cache/
+.ruff_cache/

@@ -9,7 +9,9 @@ def run(args) -> Result:
         return run_qs(["-c", "clavis", "ipc", "show"], "ipc.show")
     if args.action == "call":
         if not args.target or not args.method:
-            return fail("ipc.call", 2, "usage_error", "usage: key ipc call TARGET METHOD [ARGUMENTS...]")
+            return fail(
+                "ipc.call", 2, "usage_error", "usage: key ipc call TARGET METHOD [ARGUMENTS...]"
+            )
         return run_qs(
             ["-c", "clavis", "ipc", "call", args.target, args.method, *args.arguments],
             "ipc.call",

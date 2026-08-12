@@ -64,9 +64,7 @@ def test_gif_start_records_supported_intermediate_container_without_notifying(
     assert notifications == []
 
 
-def test_gif_conversion_uses_ffmpeg_and_waits_for_completion(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_gif_conversion_uses_ffmpeg_and_waits_for_completion(tmp_path: Path, monkeypatch) -> None:
     temporary = tmp_path / ".recording.partial.mp4"
     output = tmp_path / "recording.gif"
     temporary.write_bytes(b"video")
@@ -95,9 +93,7 @@ def test_gif_conversion_uses_ffmpeg_and_waits_for_completion(
     assert output.read_bytes() == b"GIF89a"
 
 
-def test_gif_completion_notifies_only_after_processing(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_gif_completion_notifies_only_after_processing(tmp_path: Path, monkeypatch) -> None:
     temporary = tmp_path / ".recording.partial.mp4"
     output = tmp_path / "recording.gif"
     temporary.write_bytes(b"video")
@@ -134,6 +130,8 @@ def test_gif_completion_notifies_only_after_processing(
     result = record._finalize(state)
 
     assert result.exit_code == 0
-    assert events.index("processing") < events.index(next(event for event in events if isinstance(event, tuple) and event[0] == "notify"))
+    assert events.index("processing") < events.index(
+        next(event for event in events if isinstance(event, tuple) and event[0] == "notify")
+    )
     assert output.is_file()
     assert not temporary.exists()

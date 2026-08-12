@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -39,6 +38,8 @@ def test_clipboard_status_has_capabilities_without_watcher(tmp_path, monkeypatch
 
     assert result.exit_code != 0
     assert payload["schemaVersion"] == 1
+    assert payload["command"] == "clipboard.status"
+    assert payload["ok"] is False
     assert payload["watcherRunning"] is False
     assert payload["capabilities"] == {
         "inspect": True,
@@ -47,12 +48,3 @@ def test_clipboard_status_has_capabilities_without_watcher(tmp_path, monkeypatch
         "mimeAwareStore": True,
     }
     assert payload["error"]["code"] == "cliphist_watcher_inactive"
-
-
-def test_clipboard_service_is_packaged_by_key_cli() -> None:
-    unit = Path(__file__).parents[1] / "systemd/user/clavis-clipboard.service"
-    text = unit.read_text(encoding="utf-8")
-    assert "ExecStart=key clipboard watch" in text
-    assert "Requisite=niri.service" in text
-    assert "PartOf=niri.service" in text
-    assert "WantedBy=niri.service" in text

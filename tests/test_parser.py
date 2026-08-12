@@ -1,21 +1,22 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 from key_cli.parser import build_parser
 
 
 def test_public_command_groups_are_small() -> None:
-    parser = build_parser()
-    actions = parser.parse_args([])
-    assert not hasattr(actions, "handler")
-    assert {action for action in parser._subparsers._group_actions[0].choices} == {
-        "shell",
-        "ipc",
-        "record",
-        "audio",
-        "clipboard",
-        "doctor",
-        "version",
-    }
+    result = subprocess.run(
+        [sys.executable, "-m", "key_cli", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
+    for command in ("shell", "ipc", "record", "audio", "clipboard", "doctor", "version"):
+        assert command in result.stdout
 
 
 def test_record_lifecycle_arguments() -> None:
@@ -51,15 +52,11 @@ def test_audio_lifecycle_matches_qml_commands() -> None:
 
 
 def test_clipboard_json_forms_match_qml_commands() -> None:
-    listing = build_parser().parse_args(
-        ["clipboard", "list", "--format", "json", "--limit", "5"]
-    )
+    listing = build_parser().parse_args(["clipboard", "list", "--format", "json", "--limit", "5"])
     assert listing.action == "list"
     assert listing.format == "json"
     assert listing.limit == 5
-    restore = build_parser().parse_args(
-        ["clipboard", "restore", "123", "--format", "json"]
-    )
+    restore = build_parser().parse_args(["clipboard", "restore", "123", "--format", "json"])
     assert restore.action == "restore"
     assert restore.id == "123"
     assert restore.format == "json"

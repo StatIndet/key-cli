@@ -62,12 +62,13 @@ def wait_for_identity(
     deadline = time.monotonic() + timeout
     identity = capture(pid, expected_executable)
     while time.monotonic() < deadline:
-        if identity.start_ticks > 0 and (
-            not expected_executable
-            or executable(pid) in {expected_executable, os.path.basename(expected_executable)}
-        ) and (
-            not argument
-            or any(os.fsencode(argument) in value for value in command_line(pid))
+        if (
+            identity.start_ticks > 0
+            and (
+                not expected_executable
+                or executable(pid) in {expected_executable, os.path.basename(expected_executable)}
+            )
+            and (not argument or any(os.fsencode(argument) in value for value in command_line(pid)))
         ):
             return identity
         time.sleep(0.05)
@@ -76,7 +77,11 @@ def wait_for_identity(
 
 
 def alive(identity: Identity) -> bool:
-    return identity.pid > 0 and start_ticks(identity.pid) == identity.start_ticks and identity.start_ticks > 0
+    return (
+        identity.pid > 0
+        and start_ticks(identity.pid) == identity.start_ticks
+        and identity.start_ticks > 0
+    )
 
 
 def matches(identity: Identity, executable_name: str, argument: str = "") -> bool:
@@ -101,7 +106,9 @@ def wait_gone(identity: Identity, timeout: float) -> bool:
     return not alive(identity)
 
 
-def stop_verified(identity: Identity, executable_name: str, argument: str = "") -> tuple[bool, bool, str]:
+def stop_verified(
+    identity: Identity, executable_name: str, argument: str = ""
+) -> tuple[bool, bool, str]:
     """Stop one verified process with SIGINT, SIGTERM, then SIGKILL."""
     if not matches(identity, executable_name, argument):
         return False, False, "process identity no longer matches the saved session"

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-from ..utils.process import Identity, capture
-from ..utils.output import GENERAL_FAILURE, Result, SESSION_CONFLICT, fail, ok
-from .state import base_state, load, locked, save, StateError
+from ..utils.process import Identity
+from ..utils.output import GENERAL_FAILURE, Result
+from .state import base_state, load, save
 
 
 def now_ms() -> int:
@@ -22,7 +21,11 @@ def output_directory(value: str | None, kind: str) -> Path:
         return Path(value).expanduser()
     if kind == "audio":
         music = os.environ.get("XDG_MUSIC_DIR", "")
-        return Path(music).expanduser() / "Clavis" / "Audio" if music else Path.home() / "Music" / "Clavis" / "Audio"
+        return (
+            Path(music).expanduser() / "Clavis" / "Audio"
+            if music
+            else Path.home() / "Music" / "Clavis" / "Audio"
+        )
     videos = os.environ.get("XDG_VIDEOS_DIR", "")
     return Path(videos).expanduser() if videos else Path.home() / "Videos"
 
@@ -31,7 +34,9 @@ def process_fields(state: dict[str, Any]) -> Identity:
     return Identity(int(state.get("pid") or 0), int(state.get("processStartTicks") or 0), "")
 
 
-def response(state: dict[str, Any], command: str, *, ok_value: bool, error_value=None, **extra: Any) -> Result:
+def response(
+    state: dict[str, Any], command: str, *, ok_value: bool, error_value=None, **extra: Any
+) -> Result:
     payload = dict(state)
     payload.update(extra)
     payload["command"] = command
@@ -45,7 +50,13 @@ def response(state: dict[str, Any], command: str, *, ok_value: bool, error_value
         }.get(command, "ok")
     else:
         text = (error_value or {}).get("message", "screen recording failed")
-    return Result(0 if ok_value else int(extra.get("exitCode", GENERAL_FAILURE)), command, payload, text, not ok_value)
+    return Result(
+        0 if ok_value else int(extra.get("exitCode", GENERAL_FAILURE)),
+        command,
+        payload,
+        text,
+        not ok_value,
+    )
 
 
 def active_state(kind: str, executable: str, argument: str = "") -> tuple[dict[str, Any], bool]:
@@ -63,7 +74,10 @@ def active_state(kind: str, executable: str, argument: str = "") -> tuple[dict[s
     is_active = state.get("state") in {"starting", "recording", "paused", "stopping", "finalizing"}
     if is_active and not _matches(identity, executable, argument):
         state["state"] = "error"
-        state["error"] = {"code": "recorder_exited", "message": f"{executable} is no longer running"}
+        state["error"] = {
+            "code": "recorder_exited",
+            "message": f"{executable} is no longer running",
+        }
         state["pid"] = 0
         state["processStartTicks"] = None
         save(kind, state)
@@ -85,7 +99,9 @@ def new_state(kind: str) -> dict[str, Any]:
     return state
 
 
-def spawn(program: str, arguments: list[str], log_path: Path | None = None) -> tuple[subprocess.Popen | None, str | None]:
+def spawn(
+    program: str, arguments: list[str], log_path: Path | None = None
+) -> tuple[subprocess.Popen | None, str | None]:
     handle = None
     try:
         stdout = subprocess.DEVNULL

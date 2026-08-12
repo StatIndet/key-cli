@@ -16,7 +16,9 @@ def qs_command() -> str | None:
 def run_qs(arguments: Sequence[str], command: str) -> Result:
     program = qs_command()
     if not program:
-        return fail(command, DEPENDENCY_FAILURE, "qs_unavailable", "qs is not installed or not in PATH")
+        return fail(
+            command, DEPENDENCY_FAILURE, "qs_unavailable", "qs is not installed or not in PATH"
+        )
     environment = os.environ.copy()
     # Quickshell must use the same key-cli executable that launched it.  Do
     # not inherit a stale CLAVIS_KEY from a different installation when this
@@ -26,7 +28,13 @@ def run_qs(arguments: Sequence[str], command: str) -> Result:
         completed = subprocess.run([program, *arguments], check=False, env=environment)
     except OSError as exc:
         return fail(command, GENERAL_FAILURE, "qs_start_failed", str(exc))
-    return Result(completed.returncode, command, {"exitCode": completed.returncode}, "", completed.returncode != 0)
+    return Result(
+        completed.returncode,
+        command,
+        {"exitCode": completed.returncode},
+        "",
+        completed.returncode != 0,
+    )
 
 
 def run(args) -> Result:

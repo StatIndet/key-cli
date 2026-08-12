@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from typing import Any
 
-from ..utils.output import DEPENDENCY_FAILURE, Result, fail, ok
+from ..utils.output import DEPENDENCY_FAILURE, Result
 
 
 COMMANDS = {
