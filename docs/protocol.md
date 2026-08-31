@@ -42,6 +42,12 @@ Clipboard responses report the selected operation, dependency/capability informa
 watcher state and, for entries, the stable `id`, MIME/payload classification and decoded
 metadata. Binary payload data is not embedded in the normal JSON response.
 
+Text entries are exposed as literal plain text. When a clipboard offer contains both
+`text/plain` and `text/html`, the plain-text representation is stored. HTML-only source is
+stored byte-for-byte and exposed as literal text within the normal preview/search limits; it
+is not rendered, stripped, entity-decoded or promoted to an embedded image. Restoring such
+an entry publishes `text/plain;charset=utf-8`.
+
 ## Exit codes
 
 The process exit code is part of the contract:

@@ -100,6 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
             else f"clipboard {action}"
         )
         sub = clipboard_commands.add_parser(action, help=help_text)
+        if action == "store":
+            sub.add_argument("--stdin", action="store_true", help=argparse.SUPPRESS)
         sub.add_argument("--format", choices=["json"], default=None)
         sub.add_argument("--json", action="store_true")
     clipboard_parser.set_defaults(handler=clipboard)

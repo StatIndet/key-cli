@@ -60,6 +60,9 @@ def test_clipboard_json_forms_match_qml_commands() -> None:
     assert restore.action == "restore"
     assert restore.id == "123"
     assert restore.format == "json"
+    store = build_parser().parse_args(["clipboard", "store", "--stdin"])
+    assert store.action == "store"
+    assert store.stdin is True
 
 
 def test_ipc_preserves_argument_array() -> None:

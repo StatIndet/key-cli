@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import base64
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,26 +33,59 @@ def test_cliphist_binary_marker_is_image() -> None:
     assert entry["payloadKind"] == "image"
 
 
-def test_html_embedded_image_is_inspectable() -> None:
-    data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8 + (16).to_bytes(4, "big") + (8).to_bytes(4, "big")
-    html = (
-        '<html><body><img src="data:image/png;base64,'
-        + base64.b64encode(data).decode()
-        + '"></body></html>'
-    ).encode()
+def test_html_source_is_preserved_as_plain_text() -> None:
+    html = b'<html><body><img src="data:image/png;base64,AAAA"></body></html>'
     payload, error = inspect_payload("8", html, False)
     assert error is None
-    assert payload["payloadKind"] == "image"
-    assert payload["htmlImageFallback"] is True
+    assert payload["payloadKind"] == "text"
+    assert payload["textSubtype"] == "plain"
+    assert payload["mimeType"] == "text/plain;charset=utf-8"
+    assert payload["preview"] == html.decode()
 
 
-def test_html_markup_is_distinguished_from_angle_bracket_text() -> None:
+def test_html_markup_and_angle_bracket_text_keep_their_original_source() -> None:
     html_payload, html_error = inspect_payload("html", b"<p>Hello</p>", False)
     plain_payload, plain_error = inspect_payload("plain", b"<not-a-tag>", False)
     assert html_error is None
     assert plain_error is None
-    assert html_payload["textSubtype"] == "html"
+    assert html_payload["textSubtype"] == "plain"
+    assert html_payload["preview"] == "<p>Hello</p>"
     assert plain_payload["textSubtype"] == "plain"
+
+
+def test_restore_keeps_html_source_bytes_and_publishes_plain_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = b"<p>literal &amp; source</p>"
+    copied: dict[str, object] = {}
+
+    monkeypatch.setattr(backend, "executable", lambda name: name)
+    monkeypatch.setattr(
+        backend,
+        "run",
+        lambda program, arguments, *args, **kwargs: subprocess.CompletedProcess(
+            [program, *arguments],
+            0,
+            stdout=source if program == "cliphist" else b"",
+            stderr=b"",
+        ),
+    )
+
+    def fake_wl_copy(program: str, arguments: list[str], input_data: bytes):
+        copied.update(program=program, arguments=arguments, input_data=input_data)
+        return subprocess.CompletedProcess([program, *arguments], 0)
+
+    monkeypatch.setattr(backend, "run_wl_copy", fake_wl_copy)
+
+    result = backend.run_command(SimpleNamespace(action="restore", id="12"))
+
+    assert result.exit_code == 0
+    assert result.json()["mimeType"] == "text/plain;charset=utf-8"
+    assert copied == {
+        "program": "wl-copy",
+        "arguments": ["--type", "text/plain;charset=utf-8"],
+        "input_data": source,
+    }
 
 
 def test_store_preserves_file_manager_mime_before_text(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -87,11 +120,50 @@ def test_store_preserves_file_manager_mime_before_text(monkeypatch: pytest.Monke
     assert calls[-1][2] == b"copy\nfile:///tmp/report.pdf\n"
 
 
-def test_mime_priority_keeps_direct_image_and_html_semantics() -> None:
+def test_mime_priority_prefers_plain_text_over_html() -> None:
     assert select_mime(["text/plain", "text/html", "image/png"]) == "image/png"
-    assert select_mime(["text/plain", "text/html"]) == "text/html"
+    assert select_mime(["text/plain", "text/html"]) == "text/plain"
     assert select_mime(["text/html;charset=utf-8"]) == "text/html;charset=utf-8"
     assert select_mime(["text/plain;charset=utf-8", "text/plain"]) == "text/plain;charset=utf-8"
+
+
+def test_watcher_store_uses_supplied_payload_without_rereading_clipboard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, list[str], bytes | None]] = []
+
+    monkeypatch.setattr(backend, "executable", lambda name: name)
+
+    def fake_run(program: str, arguments: list[str], input_data: bytes | None = None, **_: object):
+        calls.append((program, arguments, input_data))
+        return subprocess.CompletedProcess([program, *arguments], 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(backend, "run", fake_run)
+    result = backend.store(
+        "clipboard.store",
+        "cliphist",
+        {},
+        b"<p>literal</p>",
+        "text/plain;charset=utf-8",
+    )
+
+    assert result.exit_code == 0
+    assert result.json()["selectedMime"] == "text/plain;charset=utf-8"
+    assert calls == [("cliphist", ["store"], b"<p>literal</p>")]
+
+
+def test_watcher_store_skips_an_empty_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(backend, "executable", lambda name: name)
+    monkeypatch.setattr(
+        backend,
+        "run",
+        lambda *args, **kwargs: pytest.fail("empty selection must not reach cliphist"),
+    )
+
+    result = backend.store("clipboard.store", "cliphist", {}, b"")
+
+    assert result.exit_code == 0
+    assert result.json()["stored"] is False
 
 
 def test_gnome_uri_payload_has_operation_and_never_uses_operation_as_filename() -> None:
