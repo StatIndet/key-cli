@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from key_cli.commands import audio
 from key_cli.commands import record
+from key_cli.recording import common
 from key_cli.utils.process import Identity
 
 
@@ -18,18 +20,19 @@ def _gif_start_args(output: Path) -> SimpleNamespace:
     )
 
 
-def test_gif_start_records_supported_intermediate_container_without_notifying(
-    tmp_path: Path, monkeypatch
-) -> None:
+def _audio_start_args(output: Path, source: str = "mic") -> SimpleNamespace:
+    return SimpleNamespace(source=source, output=str(output))
+
+
+def test_gif_start_records_supported_intermediate_container(tmp_path: Path, monkeypatch) -> None:
     spawned: dict[str, object] = {}
     saved: list[dict] = []
-    notifications: list[tuple[str, str]] = []
 
     class FakeProcess:
         pid = 1234
 
-    def fake_spawn(program, arguments, log_path):
-        spawned.update(program=program, arguments=arguments, log_path=log_path)
+    def fake_spawn(program, arguments):
+        spawned.update(program=program, arguments=arguments)
         return FakeProcess(), None
 
     monkeypatch.setattr(record, "active_state", lambda *args: ({}, False))
@@ -46,12 +49,6 @@ def test_gif_start_records_supported_intermediate_container_without_notifying(
     )
     monkeypatch.setattr(record, "matches", lambda *args: True)
     monkeypatch.setattr(record, "save", lambda kind, state: saved.append(dict(state)))
-    monkeypatch.setattr(
-        record,
-        "_notify",
-        lambda title, body: notifications.append((title, body)),
-    )
-
     result = record.start(_gif_start_args(tmp_path))
 
     assert result.exit_code == 0
@@ -61,7 +58,6 @@ def test_gif_start_records_supported_intermediate_container_without_notifying(
     assert temporary.name.endswith(".partial.mp4")
     assert saved[-1]["type"] == "gif"
     assert Path(saved[-1]["outputPath"]).suffix == ".gif"
-    assert notifications == []
 
 
 def test_gif_conversion_uses_ffmpeg_and_waits_for_completion(tmp_path: Path, monkeypatch) -> None:
@@ -93,7 +89,7 @@ def test_gif_conversion_uses_ffmpeg_and_waits_for_completion(tmp_path: Path, mon
     assert output.read_bytes() == b"GIF89a"
 
 
-def test_gif_completion_notifies_only_after_processing(tmp_path: Path, monkeypatch) -> None:
+def test_gif_completion_returns_final_output_after_processing(tmp_path: Path, monkeypatch) -> None:
     temporary = tmp_path / ".recording.partial.mp4"
     output = tmp_path / "recording.gif"
     temporary.write_bytes(b"video")
@@ -121,17 +117,70 @@ def test_gif_completion_notifies_only_after_processing(tmp_path: Path, monkeypat
         "save",
         lambda kind, value: events.append(("save", value["state"])),
     )
-    monkeypatch.setattr(
-        record,
-        "_notify",
-        lambda title, body: events.append(("notify", title, body)),
-    )
-
     result = record._finalize(state)
 
     assert result.exit_code == 0
-    assert events.index("processing") < events.index(
-        next(event for event in events if isinstance(event, tuple) and event[0] == "notify")
-    )
+    assert events == ["processing", ("save", "completed")]
+    assert result.payload["state"] == "completed"
+    assert result.payload["outputPath"] == str(output)
     assert output.is_file()
     assert not temporary.exists()
+
+
+def test_audio_start_uses_neutral_filename_and_requested_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spawned: dict[str, object] = {}
+    saved: list[dict] = []
+
+    class FakeProcess:
+        pid = 5678
+
+    def fake_spawn(program, arguments):
+        spawned.update(program=program, arguments=arguments)
+        return FakeProcess(), None
+
+    source = {
+        "type": "mic",
+        "name": "default-microphone",
+        "nodeName": "default-microphone",
+        "description": "Microphone",
+        "captureSink": False,
+    }
+    monkeypatch.setattr(audio, "active_state", lambda *args: ({}, False))
+    monkeypatch.setattr(audio.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(audio, "resolve_source", lambda source_type: (source, None))
+    monkeypatch.setattr(audio, "spawn", fake_spawn)
+    monkeypatch.setattr(
+        audio,
+        "wait_for_identity",
+        lambda pid, expected, argument: Identity(pid, 42, expected),
+    )
+    monkeypatch.setattr(audio, "matches", lambda *args: True)
+    monkeypatch.setattr(audio, "save", lambda kind, state: saved.append(dict(state)))
+
+    result = audio.start(_audio_start_args(tmp_path))
+
+    assert result.exit_code == 0
+    output = Path(saved[-1]["outputPath"])
+    temporary = Path(saved[-1]["temporaryPath"])
+    assert output.parent == tmp_path
+    assert output.name.startswith("microphone_")
+    assert temporary.name.startswith(".microphone_")
+    assert Path(spawned["arguments"][-1]) == temporary
+
+
+def test_audio_default_directory_uses_xdg_user_dirs_without_branding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_home = tmp_path / "config"
+    config_home.mkdir()
+    (config_home / "user-dirs.dirs").write_text(
+        'XDG_MUSIC_DIR="$HOME/Custom Music"\n', encoding="utf-8"
+    )
+    monkeypatch.delenv("XDG_MUSIC_DIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    directory = common.output_directory(None, "audio")
+
+    assert directory == Path.home() / "Custom Music" / "Recordings"

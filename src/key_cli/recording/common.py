@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -20,14 +21,31 @@ def output_directory(value: str | None, kind: str) -> Path:
     if value:
         return Path(value).expanduser()
     if kind == "audio":
-        music = os.environ.get("XDG_MUSIC_DIR", "")
-        return (
-            Path(music).expanduser() / "Clavis" / "Audio"
-            if music
-            else Path.home() / "Music" / "Clavis" / "Audio"
-        )
-    videos = os.environ.get("XDG_VIDEOS_DIR", "")
-    return Path(videos).expanduser() if videos else Path.home() / "Videos"
+        return _xdg_user_directory("XDG_MUSIC_DIR", Path.home() / "Music") / "Recordings"
+    return _xdg_user_directory("XDG_VIDEOS_DIR", Path.home() / "Videos")
+
+
+def _xdg_user_directory(name: str, fallback: Path) -> Path:
+    configured = os.environ.get(name, "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        if path.is_absolute():
+            return path
+
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")).expanduser()
+    try:
+        contents = (config_home / "user-dirs.dirs").read_text(encoding="utf-8")
+    except OSError:
+        return fallback
+
+    match = re.search(rf'^{re.escape(name)}="([^"]*)"\s*$', contents, re.MULTILINE)
+    if not match:
+        return fallback
+    configured = (
+        match.group(1).replace("${HOME}", str(Path.home())).replace("$HOME", str(Path.home()))
+    )
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else fallback
 
 
 def process_fields(state: dict[str, Any]) -> Identity:
@@ -99,31 +117,15 @@ def new_state(kind: str) -> dict[str, Any]:
     return state
 
 
-def spawn(
-    program: str, arguments: list[str], log_path: Path | None = None
-) -> tuple[subprocess.Popen | None, str | None]:
-    handle = None
+def spawn(program: str, arguments: list[str]) -> tuple[subprocess.Popen | None, str | None]:
     try:
-        stdout = subprocess.DEVNULL
-        stderr = subprocess.DEVNULL
-        if log_path:
-            log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            handle = log_path.open("ab")
-            stdout = handle
-            stderr = handle
-        try:
-            process = subprocess.Popen(
-                [program, *arguments],
-                stdin=subprocess.DEVNULL,
-                stdout=stdout,
-                stderr=stderr,
-                start_new_session=True,
-            )
-        finally:
-            if handle is not None:
-                handle.close()
+        process = subprocess.Popen(
+            [program, *arguments],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
         return process, None
     except OSError as exc:
-        if handle is not None and not handle.closed:
-            handle.close()
         return None, str(exc)

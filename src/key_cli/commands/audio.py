@@ -176,8 +176,8 @@ def start(args) -> Result:
             exitCode=GENERAL_FAILURE,
         )
     session = new_state("audio")
-    label = "System" if args.source == "system" else "Mic"
-    stem = f"Clavis_{label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{session['sessionId'][:8]}"
+    label = "system" if args.source == "system" else "microphone"
+    stem = f"{label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{session['sessionId'][:8]}"
     output = directory / f"{stem}.m4a"
     temporary = directory / f".{stem}.partial.m4a"
     session.update(
@@ -208,7 +208,7 @@ def start(args) -> Result:
         "-y",
         str(temporary),
     ]
-    process, start_error = spawn(ffmpeg, command, temporary.with_suffix(temporary.suffix + ".log"))
+    process, start_error = spawn(ffmpeg, command)
     if process is None:
         session["state"] = "error"
         session["error"] = error(

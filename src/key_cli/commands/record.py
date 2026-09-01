@@ -55,19 +55,6 @@ def _select_region() -> str | None:
     return _geometry(process.stdout.strip()) if process.returncode == 0 else None
 
 
-def _notify(title: str, body: str) -> None:
-    notify = shutil.which("notify-send")
-    if notify:
-        try:
-            subprocess.Popen(
-                [notify, "-a", "Clavis Shell", title, body],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except OSError:
-            pass
-
-
 def _gif_filter(fps: int) -> str:
     safe_fps = max(1, min(240, int(fps or 60)))
     return (
@@ -225,9 +212,7 @@ def start(args) -> Result:
     if args.audio != "none":
         command += ["-a", "default_output", "-ac", "aac"]
     command += ["-o", str(temporary)]
-    process, start_error = spawn(
-        gsr, command, Path(temporary).with_suffix(Path(temporary).suffix + ".log")
-    )
+    process, start_error = spawn(gsr, command)
     if process is None:
         state["state"] = "error"
         state["error"] = error("recorder_start_failed", start_error or "unable to start recorder")
@@ -358,7 +343,6 @@ def _finalize(state: dict) -> Result:
                 input=(output.resolve().as_uri() + "\n").encode(),
                 check=False,
             )
-    _notify("Recording stopped", str(output))
     return response(state, "record.stop", ok_value=True, error_value=None, exitCode=0)
 
 
