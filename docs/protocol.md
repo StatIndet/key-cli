@@ -48,6 +48,24 @@ stored byte-for-byte and exposed as literal text within the normal preview/searc
 is not rendered, stripped, entity-decoded or promoted to an embedded image. Restoring such
 an entry publishes `text/plain;charset=utf-8`.
 
+## Clipboard capture
+
+`key clipboard watch` keeps one `wl-paste --watch` process. Each callback applies
+key's MIME priority to the current offer: file lists, supported images, plain text,
+then HTML. A matching, supported `CLIPBOARD_TYPE` reuses the callback's stdin bytes;
+a preferred representation is read explicitly with `wl-paste --no-newline --type`.
+Direct `clipboard store` uses the same priority and never appends a newline.
+
+If the offer query fails, the captured MIME disappears, or the preferred read
+fails, a supported stdin representation is retained. Without usable captured data,
+unsupported offers and read failures return an error. Sensitive, cleared and empty
+events are not stored. Payload size limits still apply before writing to cliphist.
+
+The watch callback and a subsequent `wl-paste` query are not an atomic snapshot.
+A rapid copy can replace the offer between those operations, even when MIME names
+are unchanged. This adapter does not promise original-offer identity or implement
+its own Wayland data-control client to eliminate that race.
+
 ## Exit codes
 
 The process exit code is part of the contract:

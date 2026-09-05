@@ -848,7 +848,7 @@ def store(
             ),
             "Sensitive clipboard entry skipped",
         )
-    if selection_data == b"":
+    if selection_data == b"" or os.environ.get("CLIPBOARD_STATE", "").lower() in {"nil", "clear"}:
         return Result(
             0,
             command,
@@ -861,34 +861,59 @@ def store(
             ),
             "Empty clipboard event skipped",
         )
-    if selection_data is None:
-        types = run(wl_paste, ["--list-types"])
-        available_types = (
-            types.stdout.decode(errors="replace").splitlines()
-            if types and types.returncode == 0
-            else []
+    if selection_data is not None and len(selection_data) > MAX_PAYLOAD:
+        return fail(
+            command,
+            GENERAL_FAILURE,
+            "clipboard_payload_too_large",
+            "clipboard payload exceeds the safe limit",
+            dependencies=deps,
         )
-        selected = select_mime(available_types)
-        if not selected:
-            return fail(
-                command,
-                GENERAL_FAILURE,
-                "clipboard_mime_unsupported",
-                "clipboard selection has no supported MIME",
-                dependencies=deps,
-            )
-        selection = run(wl_paste, ["--type", selected])
+
+    types = run(wl_paste, ["--list-types"])
+    available_types = (
+        types.stdout.decode(errors="replace").splitlines()
+        if types and types.returncode == 0
+        else []
+    )
+    captured_mime = select_mime([selection_mime]) if selection_data is not None else ""
+    selected = select_mime(available_types)
+    # The callback owns stdin, but a fresh wl-paste sees the current offer. If the
+    # source disappeared/changed, keep a supported captured representation instead.
+    if captured_mime and captured_mime not in available_types:
+        selected = captured_mime
+    if "x-kde-passwordManagerHint" in available_types:
+        # The current offer may have become sensitive after the watch callback.
+        return Result(
+            0,
+            command,
+            common_payload(
+                command, available=True, stored=False, skippedSensitive=True, error=None
+            ),
+            "Sensitive clipboard entry skipped",
+        )
+    if not selected:
+        return fail(
+            command,
+            GENERAL_FAILURE,
+            "clipboard_mime_unsupported",
+            "clipboard selection has no supported MIME",
+            dependencies=deps,
+        )
+    if selection_data is None or selected != captured_mime:
+        selection = run(wl_paste, ["--no-newline", "--type", selected])
         if not selection or selection.returncode != 0:
-            return fail(
-                command,
-                GENERAL_FAILURE,
-                "clipboard_read_failed",
-                "unable to read clipboard selection",
-                dependencies=deps,
-            )
-        selection_data = selection.stdout
-    else:
-        selected = selection_mime
+            if not captured_mime:
+                return fail(
+                    command,
+                    GENERAL_FAILURE,
+                    "clipboard_read_failed",
+                    "unable to read clipboard selection",
+                    dependencies=deps,
+                )
+            selected = captured_mime
+        else:
+            selection_data = selection.stdout
 
     if len(selection_data) > MAX_PAYLOAD:
         return fail(

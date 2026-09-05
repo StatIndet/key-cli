@@ -103,7 +103,7 @@ def test_store_preserves_file_manager_mime_before_text(monkeypatch: pytest.Monke
                 stderr=b"",
             )
         if program == "wl-paste":
-            assert arguments == ["--type", "x-special/gnome-copied-files"]
+            assert arguments == ["--no-newline", "--type", "x-special/gnome-copied-files"]
             return subprocess.CompletedProcess(
                 [program, *arguments],
                 0,
@@ -149,7 +149,10 @@ def test_watcher_store_uses_supplied_payload_without_rereading_clipboard(
 
     assert result.exit_code == 0
     assert result.json()["selectedMime"] == "text/plain;charset=utf-8"
-    assert calls == [("cliphist", ["store"], b"<p>literal</p>")]
+    assert calls == [
+        ("wl-paste", ["--list-types"], None),
+        ("cliphist", ["store"], b"<p>literal</p>"),
+    ]
 
 
 def test_watcher_store_skips_an_empty_selection(monkeypatch: pytest.MonkeyPatch) -> None:
