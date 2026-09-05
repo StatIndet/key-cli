@@ -164,3 +164,44 @@ def test_changed_offer_keeps_the_captured_representation(clipboard_cli):
     )
     assert result.returncode == 0
     assert (root / "stored").read_bytes() == b"earlier text"
+
+
+@pytest.mark.parametrize(
+    "mime",
+    [
+        "text/markdown",
+        "text/css",
+        "text/csv",
+        "text/xml",
+        "text/x-notes",
+        "application/json",
+        "application/xml",
+        "application/xhtml+xml",
+        "text/markdown; charset=UTF-8",
+        "text/plain; charset=utf-8",
+    ],
+)
+def test_textual_offers_are_literal_through_watcher_and_inspect(clipboard_cli, mime):
+    root, invoke = clipboard_cli
+    source = ' \t# 标题\n**bold** <b>&amp;</b> {"a": 1}\r\n'.encode()
+    captured = invoke(["watch"], {mime: source})
+    assert captured.returncode == 0, captured.stderr.decode()
+    assert (root / "stored").read_bytes() == source
+    inspected = invoke(["inspect", "1"])
+    assert inspected.returncode == 0
+    payload = json.loads(inspected.stdout)
+    assert payload["payloadKind"] == "text"
+    assert payload["textSubtype"] == "plain"
+    assert payload["mimeType"] == "text/plain;charset=utf-8"
+    assert payload["preview"] == source.decode()
+    assert payload["searchText"] == source.decode()
+
+
+def test_watcher_prefers_markdown_over_html(clipboard_cli):
+    root, invoke = clipboard_cli
+    source = b"**literal**"
+    result = invoke(
+        ["watch"], {"text/html": b"<b>literal</b>", "text/markdown": source}, stdinMime="text/html"
+    )
+    assert result.returncode == 0
+    assert (root / "stored").read_bytes() == source

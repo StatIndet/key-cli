@@ -26,8 +26,8 @@ IMAGE_MIME_TYPES = (
     "image/webp",
     "image/gif",
 )
-PLAIN_TEXT_MIME_TYPES = ("text/plain;charset=utf-8", "text/plain")
-HTML_MIME_TYPES = ("text/html", "text/html;charset=utf-8")
+TEXT_MIME_TYPES = ("text/plain", "text/markdown", "text/html")
+TEXT_APPLICATION_MIME_TYPES = ("application/json", "application/xml", "application/xhtml+xml")
 URI_FILE_SCHEMES = {
     "afc",
     "computer",
@@ -367,22 +367,34 @@ def file_metadata(uri: str) -> dict:
 
 def select_mime(available_types: list[str]) -> str:
     """Choose a clipboard offer by semantic class, then by safe MIME order."""
-    available = {value.strip() for value in available_types if value.strip()}
+    available = sorted({value.strip() for value in available_types if value.strip()})
 
-    # File-manager offers carry information that text/plain cannot reproduce.
-    # Prefer GNOME's operation-bearing form when both file MIME types exist.
-    for mime in FILE_MIME_TYPES:
-        if mime in available:
-            return mime
-    for mime in IMAGE_MIME_TYPES:
-        if mime in available:
-            return mime
-    for mime in PLAIN_TEXT_MIME_TYPES:
-        if mime in available:
-            return mime
-    for mime in HTML_MIME_TYPES:
-        if mime in available:
-            return mime
+    def base(mime: str) -> str:
+        return mime.split(";", 1)[0].strip().lower()
+
+    def preference(mime: str) -> tuple[int, str]:
+        parameters = {
+            part.strip().lower().replace(" ", "").replace('"', "") for part in mime.split(";")[1:]
+        }
+        return (0 if "charset=utf-8" in parameters else 1 if not parameters else 2, mime)
+
+    # Preserve the actual offered name for wl-paste, including MIME parameters.
+    # File operation semantics and image bytes precede all literal text fallbacks.
+    for mime in FILE_MIME_TYPES + IMAGE_MIME_TYPES + TEXT_MIME_TYPES:
+        matches = [value for value in available if base(value) == mime]
+        if matches:
+            return min(matches, key=preference)
+    text = [
+        value
+        for value in available
+        if base(value).startswith("text/") and len(base(value)) > len("text/")
+    ]
+    if text:
+        return min(text, key=preference)
+    for mime in TEXT_APPLICATION_MIME_TYPES:
+        matches = [value for value in available if base(value) == mime]
+        if matches:
+            return min(matches, key=preference)
     return ""
 
 

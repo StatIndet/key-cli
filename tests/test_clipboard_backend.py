@@ -313,3 +313,17 @@ def test_wl_copy_reports_owner_start_failure(monkeypatch: pytest.MonkeyPatch) ->
     result = run_wl_copy("wl-copy", [], b"payload")
     assert result is not None
     assert result.returncode == 7
+
+
+@pytest.mark.parametrize(
+    ("offered", "expected"),
+    [
+        (["text/html", "text/markdown", "text/plain; charset=UTF-8"], "text/plain; charset=UTF-8"),
+        (["text/html", "text/markdown"], "text/markdown"),
+        (["application/json", "text/csv"], "text/csv"),
+        (["text/plain", 'Text/Plain; charset="UTF-8"'], 'Text/Plain; charset="UTF-8"'),
+        (["application/octet-stream", "application/rtf"], ""),
+    ],
+)
+def test_literal_mime_fallback_priority(offered, expected):
+    assert select_mime(offered) == expected

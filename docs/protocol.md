@@ -45,14 +45,19 @@ metadata. Binary payload data is not embedded in the normal JSON response.
 Text entries are exposed as literal plain text. When a clipboard offer contains both
 `text/plain` and `text/html`, the plain-text representation is stored. HTML-only source is
 stored byte-for-byte and exposed as literal text within the normal preview/search limits; it
-is not rendered, stripped, entity-decoded or promoted to an embedded image. Restoring such
-an entry publishes `text/plain;charset=utf-8`.
+is not rendered, stripped, entity-decoded or promoted to an embedded image. Markdown,
+CSS, CSV, XML, JSON and other supported text follow the same literal-content rule.
+Restoring UTF-8 text publishes `text/plain;charset=utf-8`. No charset transcoding
+is performed; bytes that cannot be safely interpreted as UTF-8 remain binary.
 
 ## Clipboard capture
 
 `key clipboard watch` keeps one `wl-paste --watch` process. Each callback applies
 key's MIME priority to the current offer: file lists, supported images, plain text,
-then HTML. A matching, supported `CLIPBOARD_TYPE` reuses the callback's stdin bytes;
+then Markdown, HTML, other `text/*`, and the known textual application types
+`application/json`, `application/xml`, `application/xhtml+xml`. MIME matching is
+case-insensitive and accepts parameters; UTF-8 variants are preferred within a
+type, and the original offered name is passed to wl-paste. A matching, supported `CLIPBOARD_TYPE` reuses the callback's stdin bytes;
 a preferred representation is read explicitly with `wl-paste --no-newline --type`.
 Direct `clipboard store` uses the same priority and never appends a newline.
 
