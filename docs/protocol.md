@@ -50,6 +50,41 @@ CSS, CSV, XML, JSON and other supported text follow the same literal-content rul
 Restoring UTF-8 text publishes `text/plain;charset=utf-8`. No charset transcoding
 is performed; bytes that cannot be safely interpreted as UTF-8 remain binary.
 
+## Clipboard capabilities and representation
+
+The clipboard capability object retains the existing fields and adds explicit
+representation limits, without changing `schemaVersion: 1`:
+
+```json
+{
+  "inspect": true,
+  "preview": true,
+  "mimeRestore": true,
+  "mimeAwareStore": true,
+  "singleRepresentation": true,
+  "multiMime": false,
+  "originalMimePreserved": false
+}
+```
+
+`mimeAwareStore` means MIME-guided selection of one representation. cliphist owns
+history, deduplication, limits, deletion and the saved payload bytes. key-cli does
+not persist the original MIME, the other offered representations, or a MIME sidecar.
+`selectedMime` describes only that store operation, not persistent entry metadata.
+
+`mimeRestore` means semantic restoration: key-cli classifies decoded bytes using
+image signatures, supported file-list syntax or safe UTF-8 text, then publishes one
+appropriate type through wl-copy. It does not reproduce the original MIME offer.
+Image data and GNOME copy/cut/file-list payloads retain their bytes; textual formats
+are displayed literally and restored as plain text. Preview truncation and display
+summaries never modify the saved payload. The classification may differ from the
+original type, especially when text itself contains valid file-list syntax.
+
+Consumers such as Clavis should keep validating the envelope and the capabilities
+they use, accept additive capability fields, and display clipboard text with an
+explicit plain-text mode. Missing new fields on older key-cli builds do not imply
+support for multi-MIME or original MIME preservation.
+
 ## Clipboard capture
 
 `key clipboard watch` keeps one `wl-paste --watch` process. Each callback applies

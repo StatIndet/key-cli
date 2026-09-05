@@ -195,6 +195,22 @@ def test_textual_offers_are_literal_through_watcher_and_inspect(clipboard_cli, m
     assert payload["mimeType"] == "text/plain;charset=utf-8"
     assert payload["preview"] == source.decode()
     assert payload["searchText"] == source.decode()
+    assert payload["schemaVersion"] == 1
+    assert payload["command"] == "clipboard.inspect"
+    assert payload["ok"] is True
+    assert payload["error"] is None
+    assert payload["capabilities"]["singleRepresentation"] is True
+    assert payload["capabilities"]["multiMime"] is False
+    assert payload["capabilities"]["originalMimePreserved"] is False
+    restored = invoke(["restore", "1"])
+    assert restored.returncode == 0, restored.stderr.decode()
+    assert json.loads(restored.stdout)["mimeType"] == "text/plain;charset=utf-8"
+    assert (root / "copied").read_bytes() == source
+    assert json.loads((root / "copy-args.json").read_text()) == [
+        "--foreground",
+        "--type",
+        "text/plain;charset=utf-8",
+    ]
 
 
 def test_watcher_prefers_markdown_over_html(clipboard_cli):
@@ -205,3 +221,28 @@ def test_watcher_prefers_markdown_over_html(clipboard_cli):
     )
     assert result.returncode == 0
     assert (root / "stored").read_bytes() == source
+
+
+@pytest.mark.parametrize(
+    ("source", "mime"),
+    [
+        (PNG, "image/png"),
+        (b"cut\nfile:///tmp/a\n", "x-special/gnome-copied-files"),
+        (b"file:///tmp/a\nfile:///tmp/b\n", "text/uri-list"),
+    ],
+)
+def test_watcher_restores_single_semantic_representation(clipboard_cli, source, mime):
+    root, invoke = clipboard_cli
+    captured = invoke(["watch"], {mime: source})
+    assert captured.returncode == 0
+    restored = invoke(["restore", "1"])
+    assert restored.returncode == 0, restored.stderr.decode()
+    payload = json.loads(restored.stdout)
+    assert payload["schemaVersion"] == 1
+    assert payload["command"] == "clipboard.restore"
+    assert payload["ok"] is True
+    assert payload["error"] is None
+    assert payload["mimeType"] == mime
+    assert payload["capabilities"]["originalMimePreserved"] is False
+    assert (root / "copied").read_bytes() == source
+    assert json.loads((root / "copy-args.json").read_text()) == ["--foreground", "--type", mime]

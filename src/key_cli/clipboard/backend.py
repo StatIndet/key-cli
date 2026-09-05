@@ -18,7 +18,15 @@ from ..utils.executable import current_key_executable
 
 MAX_PAYLOAD = 64 * 1024 * 1024
 MAX_LIMIT = 500
-CAPABILITIES = {"inspect": True, "preview": True, "mimeRestore": True, "mimeAwareStore": True}
+CAPABILITIES = {
+    "inspect": True,
+    "preview": True,
+    "mimeRestore": True,
+    "mimeAwareStore": True,
+    "singleRepresentation": True,
+    "multiMime": False,
+    "originalMimePreserved": False,
+}
 FILE_MIME_TYPES = ("x-special/gnome-copied-files", "text/uri-list")
 IMAGE_MIME_TYPES = (
     "image/png",

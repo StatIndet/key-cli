@@ -26,6 +26,9 @@ if program == "cliphist":
         sys.stdout.buffer.write((root / "stored").read_bytes())
     else:
         sys.exit(2)
+elif program == "wl-copy":
+    (root / "copied").write_bytes(sys.stdin.buffer.read())
+    (root / "copy-args.json").write_text(json.dumps(args))
 elif program == "wl-paste":
     offer = config["offer"]
     if "--watch" in args:

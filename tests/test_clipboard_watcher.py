@@ -46,5 +46,8 @@ def test_clipboard_status_has_capabilities_without_watcher(tmp_path, monkeypatch
         "preview": True,
         "mimeRestore": True,
         "mimeAwareStore": True,
+        "singleRepresentation": True,
+        "multiMime": False,
+        "originalMimePreserved": False,
     }
     assert payload["error"]["code"] == "cliphist_watcher_inactive"
